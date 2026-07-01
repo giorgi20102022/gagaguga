@@ -1,0 +1,97 @@
+Advanced Technical Prompt for Bolt.new
+Project Overview:
+Create a high-fidelity, multi-step React application for a Dealer Portal managed via n8n. The app must handle complex pricing logic, AI-simulated OCR, and multi-file uploads.
+
+1. Authentication & Security:
+
+Route Protection: Only accessible after login.
+
+Credentials: Email (standard format), Password: Energo123#.
+
+Store auth state in a global context or local storage.
+
+2. State Management & Workflow Steps:
+
+Step 1: ID Scanning:
+
+Upload components for ID Front & Back.
+
+Simulation Logic: After upload, show a "Scanning..." state for 3 seconds, then auto-fill: First Name, Last Name, ID Number (11 digits), Gender, and Expiry Date.
+
+Logic: Compare Expiry Date with Current Date. If Expiry Date < Today, disable "Next" button and show "ID Expired - Access Blocked".
+
+Step 2: Profile & Social Status:
+
+Inputs: Phone Number, Region, Municipality, City/Village.
+
+Radios/Checkboxes: "Socially Vulnerable", "Nomadic", "Pensioner".
+
+Conditional Inputs:
+
+If Socially Vulnerable === true: File upload for "Social Extract". Validate that the file is provided.
+
+If Pensioner === true: File upload for "Pensioner Certificate".
+
+Step 3: Product & Pricing Engine:
+
+Dropdown for Supplier Name & ID.
+
+Model Picker (Array):
+
+A1-MZ-08: 390 GEL
+
+B1-MZ-18: 250 GEL
+
+F1-MZ-25: 100 GEL (Eligible for 75% subsidy)
+
+G1-MZ-26: 560 GEL
+
+L1-MZ-27: 325 GEL
+
+C1 Fireplace: 2290 GEL
+
+Pricing Logic:
+
+Default Subsidy: 50%.
+
+Special Subsidy: If Model is F1-MZ-25, Subsidy = 75%.
+
+Formula: Beneficiary_Payable = Total_Price * (1 - Subsidy_Rate).
+
+Display "Subsidy Amount" and "Final Payable" dynamically as the user selects models.
+
+Step 4: Finalization & Receipt:
+
+Textarea: Installation Address.
+
+Order Summary Component: A clean card showing a breakdown of the selected stove, its price, subsidy percentage, and final cost.
+
+Camera Integration: File input with capture="environment" attribute to allow mobile users to take a photo of the receipt instantly.
+
+Digital Consent: A checkbox labeled "I agree to the terms and conditions" (Required to submit).
+
+3. n8n Integration (Data Submission):
+
+Data Structure: Convert all uploaded images to Base64 strings.
+
+Payload: Create a JSON object containing all user inputs, OCR results, and file strings.
+
+Action: On "Submit", send an axios.post or fetch request.
+
+Endpoint: [https://tookaa.app.n8n.cloud/webhook/2e302645-bea1-48f0-b006-040595cf9580]
+ and create post webhook url for you
+Show a "Success" or "Error" modal based on the response.
+
+4. UI/UX Requirements:
+
+Framework: React with Tailwind CSS.
+
+Components: ShadcnUI (optional) or Headless UI.
+
+Icons: Lucide-react (Camera, Upload, Check, Alert).
+
+Responsiveness: Mobile-first approach (for field dealers).
+
+Progress Bar: 4 stages (Identity, Social, Product, Payment).
+
+n 8
