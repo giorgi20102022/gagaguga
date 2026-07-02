@@ -106,43 +106,56 @@ app.use((req, res, next) => {
   next();
 });
 
-(async () => {
-  const { ensureDbBasics } = await import("./db-init");
-  let bootstrapSucceeded = false;
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      await ensureDbBasics();
-      bootstrapSucceeded = true;
-      break;
-    } catch (e) {
-      console.error(`[db] bootstrap attempt ${attempt} failed`, e);
-      if (attempt === 3) {
-        throw e;
+let appPromise: Promise<express.Express> | null = null;
+
+export async function getApp() {
+  if (appPromise) return appPromise;
+
+  appPromise = (async () => {
+    const { ensureDbBasics } = await import("./db-init");
+    let bootstrapSucceeded = false;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        await ensureDbBasics();
+        bootstrapSucceeded = true;
+        break;
+      } catch (e) {
+        console.error(`[db] bootstrap attempt ${attempt} failed`, e);
+        if (attempt === 3) {
+          throw e;
+        }
+        await new Promise((r) => setTimeout(r, 2000 * attempt));
       }
-      await new Promise((r) => setTimeout(r, 2000 * attempt));
-    }
-  }
-
-  if (!bootstrapSucceeded) {
-    throw new Error("[db] PostgreSQL bootstrap did not complete successfully");
-  }
-
-  const { registerRoutes } = await import("./routes");
-  const { serveStatic } = await import("./static");
-  await registerRoutes(httpServer, app);
-
-  app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
-    const status = err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
-
-    console.error("Internal Server Error:", err);
-
-    if (res.headersSent) {
-      return next(err);
     }
 
-    return res.status(status).json({ message });
-  });
+    if (!bootstrapSucceeded) {
+      throw new Error("[db] PostgreSQL bootstrap did not complete successfully");
+    }
+
+    const { registerRoutes } = await import("./routes");
+    await registerRoutes(httpServer, app);
+
+    app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
+      const status = err.status || err.statusCode || 500;
+      const message = err.message || "Internal Server Error";
+
+      console.error("Internal Server Error:", err);
+
+      if (res.headersSent) {
+        return next(err);
+      }
+
+      return res.status(status).json({ message });
+    });
+
+    return app;
+  })();
+
+  return appPromise;
+}
+
+if (!process.env.VERCEL) {
+  getApp().then(async () => {
 
   // Try preferred port first, fall back to next port if busy.
   const preferredPort = parseInt(process.env.PORT || "5000", 10);
@@ -176,21 +189,26 @@ app.use((req, res, next) => {
   }
   log(`serving on port ${activePort}`);
 
-  // 4. HTTP SERVER TIMEOUTS: attached directly to the active server listener object
-  httpServer.timeout = 120000; // 2 minutes
-  httpServer.keepAliveTimeout = 65000;
-  httpServer.headersTimeout = 66000;
+    // 4. HTTP SERVER TIMEOUTS: attached directly to the active server listener object
+    httpServer.timeout = 120000; // 2 minutes
+    httpServer.keepAliveTimeout = 65000;
+    httpServer.headersTimeout = 66000;
 
-  // importantly only setup vite in development and after
-  // setting up all the other routes so the catch-all route
-  // doesn't interfere with the other routes
-  //
-  // In middleware mode, Vite's HMR may wait for the HTTP server
-  // to be listening, so we start listening before setupVite.
-  if (process.env.NODE_ENV === "production") {
-    serveStatic(app);
-  } else {
-    const { setupVite } = await import("./vite");
-    await setupVite(httpServer, app);
-  }
-})();
+    // importantly only setup vite in development and after
+    // setting up all the other routes so the catch-all route
+    // doesn't interfere with the other routes
+    //
+    // In middleware mode, Vite's HMR may wait for the HTTP server
+    // to be listening, so we start listening before setupVite.
+    if (process.env.NODE_ENV === "production") {
+      const { serveStatic } = await import("./static");
+      serveStatic(app);
+    } else {
+      const { setupVite } = await import("./vite");
+      await setupVite(httpServer, app);
+    }
+  }).catch((err) => {
+    console.error("Failed to start server", err);
+    process.exit(1);
+  });
+}
