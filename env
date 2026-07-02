@@ -1,0 +1,24 @@
+DATABASE_URL="postgresql://neondb_owner:npg_wGVcZQYplj78@ep-steep-fog-ai2ebus2-pooler.c-4.us-east-1.aws.neon.tech/neondb?sslmode=verify-full"
+SESSION_SECRET="super-secret-key-12345"
+JWT_SECRET="enterprise-grade-jwt-secret-key-change-in-production-2026"
+AUTH_SECRET="enterprise-grade-auth-secret-key-change-in-production-2026"
+PORT=5000
+GOOGLE_API_KEY1="AIzaSyCmcS2dBguWFhJt7LXL25DVU_cQ6jyF6vY"
+NODE_ENV=development
+FRONTEND_URL="http://localhost:5173"
+CLIENT_URL="http://localhost:5173"
+ALLOWED_ORIGINS="http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,http://127.0.0.1:3000"
+
+VISION_DEBUG=true
+
+# n8n execution timeout (seconds)
+EXECUTIONS_TIMEOUT=120
+EXECUTIONS_TIMEOUT_MAX=120
+N8N_WEBHOOK_URL=https://n8n.srv1020074.hstgr.cloud/webhook/process-id-card
+PENSION_DOCUMENT_WEBHOOK=https://n8n.srv1020074.hstgr.cloud/webhook/process-document
+SOCIAL_ID_WEBHOOK=https://n8n.srv1020074.hstgr.cloud/webhook/socialuri-id-card
+RECEIPT_WEBHOOK=https://n8n.srv1020074.hstgr.cloud/webhook/qvitari
+SUBMIT_ALL_DATA_WEBHOOK=https://n8n.srv1020074.hstgr.cloud/webhook/69083b0e-989b-4fa9-a091-0bd322884e1f
+STOVE_CODE_CHECK_WEBHOOK=https://n8n.srv1020074.hstgr.cloud/webhook/kodiii
+SMS_API_KEY=e2a7e75fefdb4b58b99537fbaa055159
+PASSPORT_WEBHOOK_URL="https://n8n.srv1020074.hstgr.cloud/webhook/pasporti"
