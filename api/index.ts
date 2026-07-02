@@ -5,6 +5,10 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 import dotenv from "dotenv";
 
+import { configureSecurityMiddleware } from "../server/middleware/security";
+import { ensureDbBasics } from "../server/db-init";
+import { registerRoutes } from "../server/routes";
+
 // Load environment variables
 dotenv.config();
 
@@ -55,13 +59,8 @@ export default async function handler(req: Request, res: Response) {
     try {
       console.log("[Vercel] Initializing Express app...");
       
-      const { configureSecurityMiddleware } = await import("../server/middleware/security");
       configureSecurityMiddleware(app);
-
-      const { ensureDbBasics } = await import("../server/db-init");
       await ensureDbBasics();
-
-      const { registerRoutes } = await import("../server/routes");
       await registerRoutes(httpServer, app);
 
       isInitialized = true;
