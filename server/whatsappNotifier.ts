@@ -3,8 +3,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getStorage } from "./storage";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PYTHON_SCRIPT = path.resolve(__dirname, "..", "whatsapp", "pythone3.py");
+const _dirname = typeof __dirname !== 'undefined' ? __dirname : path.dirname(fileURLToPath((import.meta as any).url));
+const PYTHON_SCRIPT = path.resolve(_dirname, "..", "whatsapp", "pythone3.py");
 
 function pythonCommands(): string[][] {
   const configured = (process.env.PYTHON_CMD || process.env.PYTHON_EXECUTABLE)?.trim();

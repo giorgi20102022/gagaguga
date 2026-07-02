@@ -10,8 +10,8 @@ export type PersonalIdLookupResult = {
   portalMessage?: string;
 };
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PYTHON_SCRIPT = path.resolve(__dirname, "..", "python.py");
+const _dirname = typeof __dirname !== 'undefined' ? __dirname : path.dirname(fileURLToPath((import.meta as any).url));
+const PYTHON_SCRIPT = path.resolve(_dirname, "..", "python.py");
 const LOOKUP_TIMEOUT_MS = Number(process.env.PERSONAL_ID_LOOKUP_TIMEOUT_MS ?? 120_000);
 
 function pythonCommands(): string[][] {
