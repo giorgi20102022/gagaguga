@@ -70,6 +70,11 @@ export function configureSecurityMiddleware(app: Express) {
           return callback(null, true);
         }
 
+        // Allow any Vercel or Replit preview environments
+        if (origin.endsWith(".vercel.app") || origin.endsWith(".replit.dev")) {
+          return callback(null, true);
+        }
+
         return callback(new Error(`Not allowed by CORS: ${origin}`));
       },
       credentials: true,

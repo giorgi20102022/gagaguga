@@ -46,6 +46,9 @@ app.use(
       if (allowedOrigins.has(origin)) {
         return callback(null, true);
       }
+      if (origin.endsWith(".vercel.app") || origin.endsWith(".replit.dev")) {
+        return callback(null, true);
+      }
       return callback(new Error(`Not allowed by CORS: ${origin}`));
     },
     credentials: true,
