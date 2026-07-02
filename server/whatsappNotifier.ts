@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getStorage } from "./storage";
 
-const _dirname = typeof __dirname !== 'undefined' ? __dirname : path.dirname(fileURLToPath((import.meta as any).url));
+const _dirname = typeof __dirname !== 'undefined' ? __dirname : process.cwd();
 const PYTHON_SCRIPT = path.resolve(_dirname, "..", "whatsapp", "pythone3.py");
 
 function pythonCommands(): string[][] {
