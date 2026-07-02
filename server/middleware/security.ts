@@ -4,6 +4,9 @@ import { Express } from "express";
 
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
 const CLIENT_URL = process.env.CLIENT_URL;
+const VERCEL_URL = process.env.VERCEL_URL
+  ? `https://${process.env.VERCEL_URL}`
+  : undefined;
 const NODE_ENV = process.env.NODE_ENV || "development";
 const IS_PRODUCTION = NODE_ENV === "production";
 const DEV_LOCAL_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
@@ -13,12 +16,33 @@ const allowedOrigins = new Set(
   [
     FRONTEND_URL,
     CLIENT_URL,
+    VERCEL_URL,
     ...(process.env.ALLOWED_ORIGINS || "")
       .split(",")
       .map((origin) => origin.trim())
       .filter(Boolean),
   ].filter(Boolean) as string[]
 );
+
+function isAllowedOrigin(origin: string): boolean {
+  if (allowedOrigins.has(origin)) {
+    return true;
+  }
+
+  try {
+    const { protocol, hostname } = new URL(origin);
+    if (protocol !== "http:" && protocol !== "https:") {
+      return false;
+    }
+    if (hostname.endsWith(".vercel.app") || hostname.endsWith(".replit.dev")) {
+      return true;
+    }
+  } catch {
+    return false;
+  }
+
+  return false;
+}
 
 export function configureSecurityMiddleware(app: Express) {
   // Helmet.js for secure HTTP headers (only in production to avoid blocking HMR and dev tunnels)
@@ -66,12 +90,7 @@ export function configureSecurityMiddleware(app: Express) {
         }
 
         // Always allow explicitly configured frontend origins.
-        if (allowedOrigins.has(origin)) {
-          return callback(null, true);
-        }
-
-        // Allow any Vercel or Replit preview environments
-        if (origin.endsWith(".vercel.app") || origin.endsWith(".replit.dev")) {
+        if (isAllowedOrigin(origin)) {
           return callback(null, true);
         }
 

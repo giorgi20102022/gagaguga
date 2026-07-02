@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 export type PersonalIdLookupResult = {
   success: boolean;
@@ -10,8 +9,7 @@ export type PersonalIdLookupResult = {
   portalMessage?: string;
 };
 
-const _dirname = typeof __dirname !== 'undefined' ? __dirname : process.cwd();
-const PYTHON_SCRIPT = path.resolve(_dirname, "..", "python.py");
+const PYTHON_SCRIPT = path.resolve(process.cwd(), "python.py");
 const LOOKUP_TIMEOUT_MS = Number(process.env.PERSONAL_ID_LOOKUP_TIMEOUT_MS ?? 120_000);
 
 function pythonCommands(): string[][] {

@@ -1,10 +1,8 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { getStorage } from "./storage";
 
-const _dirname = typeof __dirname !== 'undefined' ? __dirname : process.cwd();
-const PYTHON_SCRIPT = path.resolve(_dirname, "..", "whatsapp", "pythone3.py");
+const PYTHON_SCRIPT = path.resolve(process.cwd(), "whatsapp", "pythone3.py");
 
 function pythonCommands(): string[][] {
   const configured = (process.env.PYTHON_CMD || process.env.PYTHON_EXECUTABLE)?.trim();

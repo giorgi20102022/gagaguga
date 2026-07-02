@@ -6,7 +6,6 @@ import multer from "multer";
 import axios from "axios";
 import { Blob } from "node:buffer";  // added to construct real Blob objects
 import cookieParser from "cookie-parser";
-import cors from "cors";
 
 dotenv.config({ path: resolve(process.cwd(), ".env") });
 
@@ -23,43 +22,7 @@ if (!process.env.DATABASE_URL) {
 const app = express();
 const httpServer = createServer(app);
 
-// 1. ABSOLUTE TOP OF FILE (INITIALIZATION): CORS middleware configured immediately
-const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
-const CLIENT_URL = process.env.CLIENT_URL;
-const allowedOrigins = new Set(
-  [
-    FRONTEND_URL,
-    CLIENT_URL,
-    ...(process.env.ALLOWED_ORIGINS || "")
-      .split(",")
-      .map((origin) => origin.trim())
-      .filter(Boolean),
-  ].filter(Boolean) as string[]
-);
-
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      if (!origin || process.env.NODE_ENV !== "production") {
-        return callback(null, true);
-      }
-      if (allowedOrigins.has(origin)) {
-        return callback(null, true);
-      }
-      if (origin.endsWith(".vercel.app") || origin.endsWith(".replit.dev")) {
-        return callback(null, true);
-      }
-      return callback(new Error(`Not allowed by CORS: ${origin}`));
-    },
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-    exposedHeaders: ["Set-Cookie"],
-    maxAge: 86400,
-  })
-);
-
-// 2. SECOND LAYER (BODY PARSERS): Clean configurations without custom verify interceptors
+// Body parsers (CORS is configured in middleware/security.ts)
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
