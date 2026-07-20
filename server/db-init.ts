@@ -102,15 +102,25 @@ export async function ensureDbBasics() {
       IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='branches' AND column_name='send_to_rda') THEN
         ALTER TABLE branches ADD COLUMN send_to_rda BOOLEAN DEFAULT false;
       END IF;
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'products_dealer_id_name_unique') THEN
-        ALTER TABLE products ADD CONSTRAINT products_dealer_id_name_unique UNIQUE (dealer_id, name);
-      END IF;
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'branches_dealer_id_name_unique') THEN
-        ALTER TABLE branches ADD CONSTRAINT branches_dealer_id_name_unique UNIQUE (dealer_id, name);
-      END IF;
     END
     $$;
   `);
+
+  try {
+    await dbPool.query(`ALTER TABLE products DROP CONSTRAINT IF EXISTS products_dealer_id_name_unique CASCADE;`);
+    await dbPool.query(`DROP INDEX IF EXISTS products_dealer_id_name_unique CASCADE;`);
+    await dbPool.query(`ALTER TABLE products ADD CONSTRAINT products_dealer_id_name_unique UNIQUE (dealer_id, name);`);
+  } catch(e) {
+    console.log('[db] Note: products unique constraint setup issue:', e);
+  }
+
+  try {
+    await dbPool.query(`ALTER TABLE branches DROP CONSTRAINT IF EXISTS branches_dealer_id_name_unique CASCADE;`);
+    await dbPool.query(`DROP INDEX IF EXISTS branches_dealer_id_name_unique CASCADE;`);
+    await dbPool.query(`ALTER TABLE branches ADD CONSTRAINT branches_dealer_id_name_unique UNIQUE (dealer_id, name);`);
+  } catch(e) {
+    console.log('[db] Note: branches unique constraint setup issue:', e);
+  }
 
   await dbPool.query(`
     CREATE TABLE IF NOT EXISTS "session" (
