@@ -1740,11 +1740,13 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
           payload,
           resolve: (v) => {
             const n8nBody = v?.data;
-            const hasSuccessMessage = n8nBody?.message === "ყველაფერი წარმატებით დასრულდა" || n8nBody?.data?.message === "ყველაფერი წარმატებით დასრულდა";
-            if (hasSuccessMessage) {
+            const errStr = n8nBody?.message || n8nBody?.data?.message || "";
+            const hasSuccessMessage = errStr === "ყველაფერი წარმატებით დასრულდა";
+            const isRdaError = errStr.includes("სოფლის განვითარების") || errStr.includes("ბენეფიციარის") || errStr.includes("IT დეპარტამენტის");
+            if (hasSuccessMessage || isRdaError) {
               resolve(n8nBody);
             } else {
-              reject(new Error(n8nBody?.message || n8nBody?.data?.message || "N8N workflow responded with a non-success status"));
+              reject(new Error(errStr || "N8N workflow responded with a non-success status"));
             }
           },
           reject: (e) => reject(e)
