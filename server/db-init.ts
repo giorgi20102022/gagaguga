@@ -144,7 +144,9 @@ export async function ensureDbBasics() {
   `);
   try {
     const constraintCheck = await dbPool.query(`
-      SELECT 1 FROM pg_constraint WHERE conname = 'session_pkey';
+      SELECT 1 
+      FROM information_schema.table_constraints 
+      WHERE table_name = 'session' AND constraint_type = 'PRIMARY KEY';
     `);
     if (constraintCheck.rowCount === 0) {
       await dbPool.query(`ALTER TABLE "session" ADD CONSTRAINT "session_pkey" PRIMARY KEY ("sid");`);
