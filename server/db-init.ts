@@ -122,13 +122,37 @@ export async function ensureDbBasics() {
     console.log('[db] Note: branches unique constraint setup issue:', e);
   }
 
-  await dbPool.query(`
-    CREATE TABLE IF NOT EXISTS "session" (
-      "sid" varchar NOT NULL,
-      "sess" json NOT NULL,
-      "expire" timestamp(6) NOT NULL
-    );
-  `);
+  try {
+    await dbPool.query(`
+      CREATE TABLE IF NOT EXISTS "session" (
+        "sid" varchar NOT NULL,
+        "sess" json NOT NULL,
+        "expire" timestamp(6) NOT NULL
+      );
+    `);
+
+    const constraintCheck = await dbPool.query(`
+      SELECT 1 
+      FROM information_schema.table_constraints 
+      WHERE table_name = 'session' AND constraint_type = 'PRIMARY KEY';
+    `);
+
+    if (constraintCheck.rowCount === 0) {
+      console.log('[db] session table is missing PRIMARY KEY. Recreating...');
+      await dbPool.query(`DROP TABLE IF EXISTS "session" CASCADE;`);
+      await dbPool.query(`
+        CREATE TABLE "session" (
+          "sid" varchar NOT NULL,
+          "sess" json NOT NULL,
+          "expire" timestamp(6) NOT NULL
+        );
+      `);
+      await dbPool.query(`ALTER TABLE "session" ADD CONSTRAINT "session_pkey" PRIMARY KEY ("sid");`);
+      console.log('[db] session table successfully recreated with primary key.');
+    }
+  } catch (e) {
+    console.error('[db] session table setup failed:', e);
+  }
 
   await dbPool.query(`
     CREATE TABLE IF NOT EXISTS active_session_locks (
@@ -142,24 +166,7 @@ export async function ensureDbBasics() {
       expires_at TIMESTAMP NOT NULL
     );
   `);
-  try {
-    const constraintCheck = await dbPool.query(`
-      SELECT 1 
-      FROM information_schema.table_constraints 
-      WHERE table_name = 'session' AND constraint_type = 'PRIMARY KEY';
-    `);
-    if (constraintCheck.rowCount === 0) {
-      await dbPool.query(`ALTER TABLE "session" ADD CONSTRAINT "session_pkey" PRIMARY KEY ("sid");`);
-    }
-  } catch (e) {
-    console.log('[db] session_pkey failed, trying recovery via truncate:', e);
-    try {
-      await dbPool.query(`TRUNCATE TABLE "session";`);
-      await dbPool.query(`ALTER TABLE "session" ADD CONSTRAINT "session_pkey" PRIMARY KEY ("sid");`);
-    } catch (inner) {
-      console.log('[db] session_pkey recovery failed:', inner);
-    }
-  }
+
   await dbPool.query(`
     CREATE INDEX IF NOT EXISTS "IDX_session_expire" ON "session" ("expire");
   `);
