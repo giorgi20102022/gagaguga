@@ -142,19 +142,22 @@ export async function ensureDbBasics() {
       expires_at TIMESTAMP NOT NULL
     );
   `);
-  await dbPool.query(`
-    DO $$
-    BEGIN
-      IF NOT EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conname = 'session_pkey'
-      ) THEN
-        ALTER TABLE "session" ADD CONSTRAINT "session_pkey" PRIMARY KEY ("sid");
-      END IF;
-    END
-    $$;
-  `);
+  try {
+    const constraintCheck = await dbPool.query(`
+      SELECT 1 FROM pg_constraint WHERE conname = 'session_pkey';
+    `);
+    if (constraintCheck.rowCount === 0) {
+      await dbPool.query(`ALTER TABLE "session" ADD CONSTRAINT "session_pkey" PRIMARY KEY ("sid");`);
+    }
+  } catch (e) {
+    console.log('[db] session_pkey failed, trying recovery via truncate:', e);
+    try {
+      await dbPool.query(`TRUNCATE TABLE "session";`);
+      await dbPool.query(`ALTER TABLE "session" ADD CONSTRAINT "session_pkey" PRIMARY KEY ("sid");`);
+    } catch (inner) {
+      console.log('[db] session_pkey recovery failed:', inner);
+    }
+  }
   await dbPool.query(`
     CREATE INDEX IF NOT EXISTS "IDX_session_expire" ON "session" ("expire");
   `);

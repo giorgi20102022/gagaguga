@@ -40,11 +40,11 @@ async function pageText(page: Page): Promise<string> {
 
 async function login(page: Page): Promise<void> {
   await page.goto(PORTAL_URL, { waitUntil: "domcontentloaded", timeout: 60_000 });
-  await page.waitForSelector("#cadcode", { state: "visible", timeout: 15_000 });
+  await page.waitForSelector("#cadcode", { state: "visible", timeout: 30_000 });
   await page.fill("#cadcode", COMPANY_CODE);
   await page.fill("#password", PASSWORD);
-  await page.click('button[type="submit"]');
-  await page.waitForSelector("text=ბენეფიციარის შემოწმება", { timeout: 30_000 });
+  await page.locator('button[type="submit"]').dispatchEvent('click');
+  await page.waitForSelector("text=ბენეფიციარის შემოწმება", { timeout: 90_000 });
 }
 
 async function searchPersonalId(page: Page, personalId: string): Promise<string> {
