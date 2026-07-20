@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
+import axios from "axios";
 
 export type PersonalIdLookupResult = {
   success: boolean;
@@ -20,6 +21,46 @@ function pythonCommands(): string[][] {
   return [[process.platform === "win32" ? "python" : "python3"]];
 }
 
+function normalizeLookupResult(
+  parsed: Partial<PersonalIdLookupResult>,
+  fallbackPersonalId: string,
+): PersonalIdLookupResult {
+  return {
+    success: Boolean(parsed.success),
+    status: parsed.status,
+    message: String(parsed.message ?? ""),
+    personalId: String(parsed.personalId ?? fallbackPersonalId),
+    portalMessage: parsed.portalMessage,
+  };
+}
+
+async function runWebhookLookup(
+  personalId: string,
+  firstName: string,
+  lastName: string,
+  mode: "check" | "register",
+): Promise<PersonalIdLookupResult> {
+  const webhookUrl = process.env.PERSONAL_ID_LOOKUP_WEBHOOK?.trim();
+  if (!webhookUrl) {
+    throw new Error("PERSONAL_ID_LOOKUP_WEBHOOK is not configured");
+  }
+
+  const response = await axios.post(
+    webhookUrl,
+    { personalId, firstName, lastName, mode },
+    { timeout: LOOKUP_TIMEOUT_MS, headers: { "Content-Type": "application/json" } },
+  );
+
+  const data = response.data;
+  if (typeof data === "string") {
+    return normalizeLookupResult(JSON.parse(data), personalId);
+  }
+  if (Array.isArray(data) && data.length > 0) {
+    return normalizeLookupResult(data[0], personalId);
+  }
+  return normalizeLookupResult(data, personalId);
+}
+
 function runPythonLookup(
   command: string[],
   personalId: string,
@@ -36,18 +77,15 @@ function runPythonLookup(
       resolve(result);
     };
 
-    const child = spawn(command[0], [
-      ...command.slice(1),
-      PYTHON_SCRIPT,
-      personalId,
-      firstName,
-      lastName,
-      mode,
-    ], {
-      cwd: path.dirname(PYTHON_SCRIPT),
-      env: { ...process.env, PYTHONIOENCODING: "utf-8" },
-      windowsHide: true,
-    });
+    const child = spawn(
+      command[0],
+      [...command.slice(1), PYTHON_SCRIPT, personalId, firstName, lastName, mode],
+      {
+        cwd: path.dirname(PYTHON_SCRIPT),
+        env: { ...process.env, PYTHONIOENCODING: "utf-8" },
+        windowsHide: true,
+      },
+    );
 
     let stdout = "";
     let stderr = "";
@@ -85,14 +123,7 @@ function runPythonLookup(
 
       if (line) {
         try {
-          const parsed = JSON.parse(line) as Partial<PersonalIdLookupResult>;
-          finish({
-            success: Boolean(parsed.success),
-            status: parsed.status,
-            message: String(parsed.message ?? ""),
-            personalId: String(parsed.personalId ?? personalId),
-            portalMessage: parsed.portalMessage,
-          });
+          finish(normalizeLookupResult(JSON.parse(line), personalId));
           return;
         } catch {
           // fall through
@@ -113,26 +144,16 @@ function runPythonLookup(
   });
 }
 
-export async function runPersonalIdLookup(
+async function runPythonLookupChain(
   personalId: string,
-  options?: { firstName?: string; lastName?: string; mode?: "check" | "register" },
+  firstName: string,
+  lastName: string,
+  mode: "check" | "register",
 ): Promise<PersonalIdLookupResult> {
-  const normalized = String(personalId ?? "").trim().replace(/\s+/g, "");
-  const firstName = String(options?.firstName ?? "").trim();
-  const lastName = String(options?.lastName ?? "").trim();
-  const mode = options?.mode === "register" ? "register" : "check";
-  if (!normalized) {
-    return {
-      success: false,
-      message: "პირადი ნომერი არ არის მითითებული",
-      personalId: normalized,
-    };
-  }
-
   let lastSpawnError: string | null = null;
 
   for (const command of pythonCommands()) {
-    const result = await runPythonLookup(command, normalized, firstName, lastName, mode);
+    const result = await runPythonLookup(command, personalId, firstName, lastName, mode);
     if (result.message.startsWith("__SPAWN_ERROR__:")) {
       lastSpawnError = result.message.replace("__SPAWN_ERROR__:", "");
       continue;
@@ -145,6 +166,53 @@ export async function runPersonalIdLookup(
     message: lastSpawnError
       ? `Python ვერ გაეშვა: ${lastSpawnError}`
       : "Python ვერ მოიძებნა. დააყენეთ Python და Playwright (pip install playwright && playwright install chromium).",
-    personalId: normalized,
+    personalId,
   };
+}
+
+export async function runPersonalIdLookup(
+  personalId: string,
+  options?: { firstName?: string; lastName?: string; mode?: "check" | "register" },
+): Promise<PersonalIdLookupResult> {
+  const normalized = String(personalId ?? "").trim().replace(/\s+/g, "");
+  const firstName = String(options?.firstName ?? "").trim();
+  const lastName = String(options?.lastName ?? "").trim();
+  const mode = options?.mode === "register" ? "register" : "check";
+
+  if (!normalized) {
+    return {
+      success: false,
+      message: "პირადი ნომერი არ არის მითითებული",
+      personalId: normalized,
+    };
+  }
+
+  if (process.env.PERSONAL_ID_LOOKUP_WEBHOOK) {
+    try {
+      return await runWebhookLookup(normalized, firstName, lastName, mode);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        success: false,
+        message: `პორტალის webhook ვერ გაეშვა: ${message}`,
+        personalId: normalized,
+      };
+    }
+  }
+
+  if (process.env.VERCEL) {
+    try {
+      const { lookupPersonalIdOnPortal } = await import("./personalIdPortal");
+      return await lookupPersonalIdOnPortal(normalized, { firstName, lastName, mode });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        success: false,
+        message: `შემოწმება ვერ მოხერხდა: ${message}`,
+        personalId: normalized,
+      };
+    }
+  }
+
+  return runPythonLookupChain(normalized, firstName, lastName, mode);
 }

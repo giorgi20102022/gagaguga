@@ -19,7 +19,7 @@ import { validateBody, loginSchema, productQuerySchema, branchQuerySchema } from
 import { securityConfig } from "./middleware/security";
 import { pool } from "./db";
 import { runPersonalIdLookup } from "./personalIdLookup";
-import { triggerWhatsappNotification } from "./whatsappNotifier";
+
 // Global map to track active dealer beneficiary personal IDs
 if (!(global as any).activeDealerBeneficiaries) {
   (global as any).activeDealerBeneficiaries = new Map<number, string>();
@@ -1565,11 +1565,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
         payload,
         resolve: (v) => {
           console.log("[Queue] Resolved in background:", v);
-          if (input.cityDistrict) {
-            triggerWhatsappNotification(dealerId, input.cityDistrict, input).catch((err) => {
-              console.error("[WhatsApp Notifier] Error in resolve callback:", err);
-            });
-          }
+
         },
         reject: (e) => console.error("[Queue] Rejected in background:", e)
       });
@@ -1775,11 +1771,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
           });
         }
 
-        if (input.cityDistrict) {
-          triggerWhatsappNotification(dealerId, input.cityDistrict, input).catch((err) => {
-            console.error("[WhatsApp Notifier] Error triggering in workspace submission:", err);
-          });
-        }
+
 
         return res.status(200).json({ success: true, message: "ყველაფერი წარმატებით დასრულდა" });
       } catch (err: any) {
