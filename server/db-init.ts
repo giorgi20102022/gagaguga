@@ -107,19 +107,15 @@ export async function ensureDbBasics() {
   `);
 
   try {
-    await dbPool.query(`ALTER TABLE products DROP CONSTRAINT IF EXISTS products_dealer_id_name_unique CASCADE;`);
-    await dbPool.query(`DROP INDEX IF EXISTS products_dealer_id_name_unique CASCADE;`);
-    await dbPool.query(`ALTER TABLE products ADD CONSTRAINT products_dealer_id_name_unique UNIQUE (dealer_id, name);`);
-  } catch(e) {
-    console.log('[db] Note: products unique constraint setup issue:', e);
+    await dbPool.query(`CREATE UNIQUE INDEX IF NOT EXISTS "products_dealer_id_name_unique" ON products (dealer_id, name);`);
+  } catch (e) {
+    console.log('[db] products unique index setup note:', e);
   }
 
   try {
-    await dbPool.query(`ALTER TABLE branches DROP CONSTRAINT IF EXISTS branches_dealer_id_name_unique CASCADE;`);
-    await dbPool.query(`DROP INDEX IF EXISTS branches_dealer_id_name_unique CASCADE;`);
-    await dbPool.query(`ALTER TABLE branches ADD CONSTRAINT branches_dealer_id_name_unique UNIQUE (dealer_id, name);`);
-  } catch(e) {
-    console.log('[db] Note: branches unique constraint setup issue:', e);
+    await dbPool.query(`CREATE UNIQUE INDEX IF NOT EXISTS "branches_dealer_id_name_unique" ON branches (dealer_id, name);`);
+  } catch (e) {
+    console.log('[db] branches unique index setup note:', e);
   }
 
   try {
@@ -130,26 +126,12 @@ export async function ensureDbBasics() {
         "expire" timestamp(6) NOT NULL
       );
     `);
-
-    const constraintCheck = await dbPool.query(`
-      SELECT 1 
-      FROM information_schema.table_constraints 
-      WHERE table_name = 'session' AND constraint_type = 'PRIMARY KEY';
+    // Ensure duplicate sid entries are cleaned up before creating unique index
+    await dbPool.query(`
+      DELETE FROM "session" a USING "session" b
+      WHERE a.ctid < b.ctid AND a.sid = b.sid;
     `);
-
-    if (constraintCheck.rowCount === 0) {
-      console.log('[db] session table is missing PRIMARY KEY. Recreating...');
-      await dbPool.query(`DROP TABLE IF EXISTS "session" CASCADE;`);
-      await dbPool.query(`
-        CREATE TABLE "session" (
-          "sid" varchar NOT NULL,
-          "sess" json NOT NULL,
-          "expire" timestamp(6) NOT NULL
-        );
-      `);
-      await dbPool.query(`ALTER TABLE "session" ADD CONSTRAINT "session_pkey" PRIMARY KEY ("sid");`);
-      console.log('[db] session table successfully recreated with primary key.');
-    }
+    await dbPool.query(`CREATE UNIQUE INDEX IF NOT EXISTS "session_sid_unique_idx" ON "session" ("sid");`);
   } catch (e) {
     console.error('[db] session table setup failed:', e);
   }
