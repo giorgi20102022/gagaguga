@@ -335,12 +335,6 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
     if (!onCancelSale) return;
     setIsCancelling(true);
     try {
-      await sendN8NRequest({
-        action: "cancel",
-        code: data.ovenCode || data.supplierId || "",
-        dealer_name: data.supplierName || "",
-        branch_name: data.supplierName || "",
-      });
       toast({
         title: "შეკვეთა გაუქმდა",
         description: "შეკვეთა გაუქმდა და კოდი ისევ ხელმისაწვდომია.",

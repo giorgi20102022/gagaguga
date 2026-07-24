@@ -390,20 +390,6 @@ export default function DealerDashboard() {
       });
       setSubmissionStatus('error');
       setIsStatusModalOpen(true);
-      const isAddCodeFailure = detailedMsg === "კოდი ვერ დაემატა";
-      if (!isAddCodeFailure) {
-        try {
-          await sendN8NRequest({
-            action: "cancel",
-            code: formData.ovenCode || "",
-            dealer_name: formData.supplierName || "",
-            branch_name: formData.supplierName || "",
-          });
-          console.log("[Cancel] Cleanup request sent successfully");
-        } catch (cancelErr) {
-          console.error("[Cancel] Cleanup request failed:", cancelErr);
-        }
-      }
     } finally {
       setIsSubmitting(false);
     }
