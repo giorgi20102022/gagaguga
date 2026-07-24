@@ -3,8 +3,8 @@ const PREVIEW_MAX_DIMENSION = 1280;
 const PREVIEW_JPEG_QUALITY = 0.82;
 
 /** Hard limits for base64 storage — enforced on EVERY image upload */
-const STORAGE_MAX_DIMENSION = 2000;
-const STORAGE_JPEG_QUALITY = 0.85;
+const STORAGE_MAX_DIMENSION = 1200;
+const STORAGE_JPEG_QUALITY = 0.70;
 
 export function getImagePreviewSrc(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
