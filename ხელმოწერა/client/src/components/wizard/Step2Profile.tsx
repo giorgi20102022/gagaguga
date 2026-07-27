@@ -278,44 +278,23 @@ export function Step2Profile({ data, updateData, onNext, onBack }: Props) {
         return;
       }
 
-      const normalizeName = (value: unknown) =>
-        String(value ?? "")
-          .trim()
-          .replace(/\s+/g, " ")
-          .toLowerCase();
-
-      const normalizeCompact = (value: unknown) => normalizeName(value).replace(/\s+/g, "");
       const normalizeId = (value: unknown) => String(value ?? "").trim().replace(/\s+/g, "");
 
-      const nameMatch = (ocrValue: unknown, formValue: unknown) => {
-        const a = normalizeName(ocrValue);
-        const b = normalizeName(formValue);
-        if (!a || !b) return false;
-        if (a === b) return true;
-        if (a.includes(b) || b.includes(a)) return true;
-        if (normalizeCompact(a) === normalizeCompact(b)) return true;
-        return false;
-      };
+      const ocrPersonalId =
+        extracted.personalId ?? extracted.idNumber ?? extracted.personal_id ?? extracted.personalNumber;
+      const formPersonalId = data.idNumber || "";
+      const personalIdMatches =
+        normalizeId(ocrPersonalId).length > 0 &&
+        normalizeId(formPersonalId).length > 0 &&
+        normalizeId(ocrPersonalId) === normalizeId(formPersonalId);
 
-      const ocrFirstName = extracted.firstName ?? extracted.name ?? extracted.first_name;
-      const ocrLastName = extracted.lastName ?? extracted.surname ?? extracted.last_name;
-      const ocrPersonalId = extracted.personalId ?? extracted.idNumber ?? extracted.personal_id;
-
-      const firstNameMatches = nameMatch(ocrFirstName, data.firstName || "");
-      const lastNameMatches = nameMatch(ocrLastName, data.lastName || "");
-      const personalIdMatches = normalizeId(ocrPersonalId) === normalizeId(data.idNumber || "");
-
-      if (!firstNameMatches || !lastNameMatches || !personalIdMatches) {
-        console.warn("[Social Verification] OCR data did not match ID card form data", {
-          ocrFirstName,
-          ocrLastName,
+      if (!personalIdMatches) {
+        console.warn("[Social Verification] Personal ID did not match form data", {
           ocrPersonalId,
-          formFirstName: data.firstName,
-          formLastName: data.lastName,
           formPersonalId: data.idNumber,
         });
         setIsSocialVerified(false);
-        setSocialVerifyError("სოციალური ბარათის მონაცემები არ ემთხვევა პირადობის მონაცემებს");
+        setSocialVerifyError("პირადი ნომერი არ ემთხვევა");
         return;
       }
 

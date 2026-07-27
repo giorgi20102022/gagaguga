@@ -1041,57 +1041,32 @@ export async function registerRoutes(
 
       const extractedSuccess = extractSuccess(raw);
 
-      // If n8n already resolved success/failure, pass through.
-      // But also apply our own loosened matching if form identity data was provided.
-      if (firstName || lastName || personalId || idNumber) {
-        const normName = (v: unknown) =>
-          String(v ?? "").trim().replace(/\s+/g, " ").toLowerCase();
-        const normId = (v: unknown) => String(v ?? "").trim().replace(/\s+/g, "");
+      const normId = (v: unknown) => String(v ?? "").trim().replace(/\s+/g, "");
+      const idKey = personalId || idNumber;
+      const ocrId = normId(ocrPersonalId);
+      const formId = normId(idKey);
 
-        const nameMatch = (ocrVal: unknown, formVal: unknown) => {
-          const a = normName(ocrVal);
-          const b = normName(formVal);
-          if (!b) return true;
-          if (a === b) return true;
-          if (a.includes(b) || b.includes(a)) return true;
-          if (a.replace(/\s/g, "") === b.replace(/\s/g, "")) return true;
-          return false;
-        };
+      if (idKey) {
+        const idMatch = ocrId.length > 0 && formId.length > 0 && ocrId === formId;
+        console.log("[Pensioner Verification] Personal ID comparison:", { ocrId, formId, idMatch });
 
-        const fMatch = !firstName || nameMatch(ocrFirstName, firstName);
-        const lMatch = !lastName || nameMatch(ocrLastName, lastName);
-        const idKey = personalId || idNumber;
-        const ocrId = normId(ocrPersonalId);
-        const formId = normId(idKey);
-        const idMatch = !idKey || (ocrId.length > 0 && formId.length > 0 && ocrId === formId);
-
-        console.log("[Pensioner Verification] Comparison result:", {
-          fMatch,
-          lMatch,
-          idMatch,
-          ocrFirstName_norm: normName(ocrFirstName),
-          formFirstName_norm: normName(firstName),
-          ocrLastName_norm: normName(ocrLastName),
-          formLastName_norm: normName(lastName),
-          ocrId,
-          formId,
-        });
-
-        if (!fMatch || !lMatch || !idMatch) {
-          const mismatches: string[] = [];
-          if (!fMatch) mismatches.push("სახელი");
-          if (!lMatch) mismatches.push("გვარი");
-          if (!idMatch) mismatches.push("პირადი ნომერი");
-          console.warn("[Pensioner Verification] Data mismatch:", mismatches.join(", "));
+        if (!idMatch) {
+          console.warn("[Pensioner Verification] Personal ID mismatch");
           return res.json({
             success: false,
             firstName: ocrFirstName,
             lastName: ocrLastName,
             personalId: ocrPersonalId,
-            mismatch: mismatches,
-            message: `მონაცემები არ ემთხვევა: ${mismatches.join(", ")}`,
+            message: "პირადი ნომერი არ ემთხვევა",
           });
         }
+
+        return res.json({
+          success: true,
+          firstName: ocrFirstName,
+          lastName: ocrLastName,
+          personalId: ocrPersonalId,
+        });
       }
 
       if (extractedSuccess === false) {
