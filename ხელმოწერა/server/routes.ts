@@ -103,6 +103,15 @@ function calculateConditionalDiscountPricing(params: {
   };
 }
 
+function withFinalPayableFields(finalPayable: number) {
+  const value = Number(Number(finalPayable || 0).toFixed(2));
+  return {
+    finalPayable: value,
+    user_copayment: value,
+    "საბოლოო_გადასახდელი": value,
+  };
+}
+
 export async function registerRoutes(
   httpServer: ReturnType<typeof createServer>,
   app: express.Application
@@ -1167,6 +1176,7 @@ export async function registerRoutes(
 
       const payload = {
         ...input,
+        ...withFinalPayableFields(input.finalPayable),
         gender: genderGeo,
         famale: Boolean(isFemale && !isMale),
         male: Boolean(isMale && !isFemale),
@@ -1302,6 +1312,7 @@ export async function registerRoutes(
         total_price_raw: totalPriceRaw,
 
         // Financials
+        ...withFinalPayableFields(pricing.finalPayable),
         user_copayment: userCopayment,
 
         // Legal & Installation Address

@@ -110,6 +110,15 @@ function calculateConditionalDiscountPricing(params: {
   };
 }
 
+function withFinalPayableFields(finalPayable: number) {
+  const value = Number(Number(finalPayable || 0).toFixed(2));
+  return {
+    finalPayable: value,
+    user_copayment: value,
+    "საბოლოო_გადასახდელი": value,
+  };
+}
+
 // Globally accessible timestamp for the last successful execution
 let last_processed_at: number = 0;
 
@@ -1455,6 +1464,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
 
     const payload = {
         ...input,
+        ...withFinalPayableFields(input.finalPayable),
         idFront: input.idFront || input.passportPhoto,
         gender: genderGeo,
         famale: Boolean(isFemale && !isMale),
@@ -1631,6 +1641,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
         total_price_raw: totalPriceRaw,
 
         // Financials
+        ...withFinalPayableFields(pricing.finalPayable),
         user_copayment: userCopayment,
 
         // Legal & Installation Address

@@ -175,6 +175,8 @@ export function useSubmission() {
           : `შპს "${dealerName}" ს/კ ${identificationCode}`)
         : undefined;
 
+      const finalPayableValue = Number(Number(data.finalPayable || 0).toFixed(2));
+
       // Build JSON payload conforming to submissionSchema
       const payload = {
         documentType: data.documentType || "id_card",
@@ -208,7 +210,9 @@ export function useSubmission() {
         deliveryFee: Number(data.deliveryFee || 0),
         ironPlus: Boolean(data.ironPlus),
         ironPlusFee: Number(data.ironPlusFee || 0),
-        finalPayable: Number(data.finalPayable || 0),
+        finalPayable: finalPayableValue,
+        user_copayment: finalPayableValue,
+        "საბოლოო_გადასახდელი": finalPayableValue,
         installationAddress: data.installationAddress || "",
         receiptPhoto: data.receiptPhoto || "",
         signature: signatureBase64,
