@@ -69,6 +69,11 @@ export const submissionSchema = z.object({
   receiptVerified: z.boolean().optional(),
   receiptVerificationMessage: z.string().optional(),
   dealerEmail: z.string(),
+  itemPrice: z.number().optional(),
+  totalPrice: z.number().optional(),
+  isIronPlusDealer: z.boolean().optional(),
+  isDeliverySelected: z.boolean().optional(),
+  dealerType: z.string().optional(),
 });
 
 export const api = {

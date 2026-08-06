@@ -148,6 +148,7 @@ export function useSubmission() {
       let dealerName = "";
       let identificationCode = "";
       let dealerEmail = "";
+      let dealerKey = "";
       try {
         const dealerRes = await axios.get("/api/dealer/me");
         if (dealerRes.data) {
@@ -155,6 +156,7 @@ export function useSubmission() {
           dealerName = dName === "Gorgia" ? "გორგია" : dName;
           identificationCode = dealerRes.data.identificationCode || "";
           dealerEmail = dealerRes.data.email || "";
+          dealerKey = dealerRes.data.key || "";
         }
       } catch (e) {
         console.warn("Failed to fetch active dealer profile in useSubmission:", e);
@@ -176,6 +178,12 @@ export function useSubmission() {
         : undefined;
 
       const finalPayableValue = Number(Number(data.finalPayable || 0).toFixed(2));
+
+      const itemPrice = Number(data.price || 0);
+      const deliveryFeeVal = Number(data.deliveryFee || 0);
+      const isIronPlus = dealerKey === "iron" || dealerKey === "iron_plus" || (data as any).dealerType === "iron_plus";
+      const isDeliverySelected = deliveryFeeVal > 0;
+      const totalPrice = isIronPlus && isDeliverySelected ? itemPrice + deliveryFeeVal : itemPrice;
 
       // Build JSON payload conforming to submissionSchema
       const payload = {
@@ -204,10 +212,10 @@ export function useSubmission() {
         supplierId: data.supplierId || "",
         supplierProfile,
         model: data.model || "",
-        price: Number(data.price || 0),
+        price: itemPrice,
         subsidyRate: Number(data.subsidyRate || 0),
         subsidyAmount: Number(data.subsidyAmount || 0),
-        deliveryFee: Number(data.deliveryFee || 0),
+        deliveryFee: isDeliverySelected ? deliveryFeeVal : 0,
         ironPlus: Boolean(data.ironPlus),
         ironPlusFee: Number(data.ironPlusFee || 0),
         finalPayable: finalPayableValue,
@@ -218,6 +226,13 @@ export function useSubmission() {
         signature: signatureBase64,
         digitalConsent: data.digitalConsent !== false,
         dealerEmail,
+
+        // Webhook calculations
+        itemPrice,
+        totalPrice,
+        isIronPlusDealer: isIronPlus,
+        isDeliverySelected,
+        dealerType: (data as any).dealerType || (isIronPlus ? "iron_plus" : undefined),
 
         // Extra parameters
         branch_email: data.branch_email,

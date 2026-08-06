@@ -254,6 +254,12 @@ export default function DealerDashboard() {
         signatureBase64 = await renderSignaturePngDataUrl(signatureText);
       }
 
+      const itemPrice = Number(formData.price || 0);
+      const deliveryFeeVal = Number(formData.deliveryFee || 0);
+      const isIronPlus = dealer?.key === "iron" || dealer?.key === "iron_plus" || (formData as any).dealerType === "iron_plus";
+      const isDeliverySelected = deliveryFeeVal > 0;
+      const totalPrice = isIronPlus && isDeliverySelected ? itemPrice + deliveryFeeVal : itemPrice;
+
       // Build JSON payload conforming to submissionSchema
       const payload = {
         documentType: formData.documentType || "id_card",
@@ -286,10 +292,10 @@ export default function DealerDashboard() {
           ? dealer.identificationCode
           : `შპს "${isGorgiaUser ? "გორგია" : dealer.name}" ს/კ ${dealer.identificationCode || ""}`,
         model: formData.model || "",
-        price: Number(formData.price || 0),
+        price: itemPrice,
         subsidyRate: Number(formData.subsidyRate || 0),
         subsidyAmount: Number(formData.subsidyAmount || 0),
-        deliveryFee: Number(formData.deliveryFee || 0),
+        deliveryFee: isDeliverySelected ? deliveryFeeVal : 0,
         ironPlus: Boolean(formData.ironPlus),
         ironPlusFee: Number(formData.ironPlusFee || 0),
         finalPayable: Number(formData.finalPayable || 0),
@@ -299,6 +305,13 @@ export default function DealerDashboard() {
         digitalConsent: formData.digitalConsent !== false,
         dealerEmail: dealer.email,
         
+        // Webhook calculations
+        itemPrice,
+        totalPrice,
+        isIronPlusDealer: isIronPlus,
+        isDeliverySelected,
+        dealerType: (formData as any).dealerType || (isIronPlus ? "iron_plus" : undefined),
+
         // Extra dealer-specific parameters fetched from the dealer account profile
         branch_email: formData.branch_email,
         whatsapp_number: formData.whatsapp_number,

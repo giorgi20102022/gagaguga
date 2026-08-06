@@ -1462,7 +1462,13 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
       const dealerIdentificationCode = (dealerRecord as any)?.identificationCode || "";
       const supplierProfile = dealerIdentificationCode;
 
-    const payload = {
+      const isIronPlus = dealerKey === "iron" || dealerKey === "iron_plus" || (input as any).dealerType === "iron_plus" || (dealerRecord && (dealerRecord.key === "iron" || dealerRecord.key === "iron_plus"));
+      const itemPrice = Number(input.price || 0);
+      const deliveryFeeVal = Number(input.deliveryFee || 0);
+      const isDeliverySelected = deliveryFeeVal > 0;
+      const totalPrice = isIronPlus && isDeliverySelected ? itemPrice + deliveryFeeVal : itemPrice;
+
+      const payload = {
         ...input,
         ...withFinalPayableFields(input.finalPayable),
         idFront: input.idFront || input.passportPhoto,
@@ -1476,6 +1482,14 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
         dealerEmail: input.dealerEmail,
         dealer_email: input.dealerEmail,
         "1.5_ელ_ფოსტა": input.dealerEmail,
+
+        // Webhook calculations
+        itemPrice,
+        deliveryFee: isDeliverySelected ? deliveryFeeVal : 0,
+        totalPrice,
+        isIronPlusDealer: isIronPlus,
+        isDeliverySelected,
+        dealerType: (input as any).dealerType || (isIronPlus ? "iron_plus" : undefined),
       };
 
       // Retrieve branch-specific email and RDA flag for Gorgia dealer
@@ -1616,6 +1630,12 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
 
       const supplierProfile = dealerIdentificationCode;
 
+      const isIronPlus = dealerKey === "iron" || dealerKey === "iron_plus" || (input as any).dealerType === "iron_plus" || (dealerRecord && (dealerRecord.key === "iron" || dealerRecord.key === "iron_plus"));
+      const itemPrice = Number(input.price || 0);
+      const deliveryFeeVal = Number(deliveryFee);
+      const isDeliverySelected = deliveryFeeVal > 0;
+      const totalPrice = isIronPlus && isDeliverySelected ? itemPrice + deliveryFeeVal : itemPrice;
+
       const payload = {
         // Raw form data + server-calculated pricing
         ...input,
@@ -1627,11 +1647,18 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
         supplierName: dealerName,
         dealerName,
         supplierProfile,
-        deliveryFee,
+        deliveryFee: isDeliverySelected ? deliveryFeeVal : 0,
         ironPlusFee,
         dealer_id: dealerId,
         dealer_key: dealerKey,
         dealer_identification_code: dealerIdentificationCode,
+
+        // Webhook calculations
+        itemPrice,
+        totalPrice,
+        isIronPlusDealer: isIronPlus,
+        isDeliverySelected,
+        dealerType: (input as any).dealerType || (isIronPlus ? "iron_plus" : undefined),
 
         // Product Details
         product_name: productName,
