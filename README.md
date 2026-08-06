@@ -1,4 +1,4 @@
-# gabulaize
+#ეეე gabulaize
 
 Minimal demo project for handling dealer/product data.
 
