@@ -14,9 +14,18 @@ export function getImagePreviewSrc(value: unknown): string | undefined {
   return `data:image/jpeg;base64,${s}`;
 }
 
+function isValidBlob(file: any): boolean {
+  return Boolean(
+    file &&
+    typeof file === "object" &&
+    typeof file.size === "number" &&
+    typeof file.slice === "function"
+  );
+}
+
 let heic2anyModule: any = null;
 async function convertHeicToJpeg(file: File): Promise<File> {
-  if (!file || !(file instanceof Blob)) return file;
+  if (!isValidBlob(file)) return file;
   const isHeic = file.type === "image/heic" || 
                  file.type === "image/heif" || 
                  /\.(heic|heif)$/i.test(file.name || "");

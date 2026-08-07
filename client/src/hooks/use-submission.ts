@@ -256,11 +256,22 @@ export function useSubmission() {
         receiptVerificationMessage: data.receiptVerificationMessage,
       };
 
-      const res = await axios.post("/api/submission/submit", payload, {
-        headers: {
-          "Content-Type": "application/json",
-        },
-      });
+      // Debug logging for iOS issues
+      console.log("[useSubmission] dealerKey:", dealerKey);
+      console.log("[useSubmission] payload being sent:", payload);
+
+      let res;
+      try {
+        res = await axios.post("/api/submission/submit", payload, {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        });
+      } catch (err) {
+        console.error("[useSubmission] Submission error:", err);
+        // Preserve original error handling by rethrowing
+        throw err;
+      }
       return res.data;
     },
     onSuccess: () => {

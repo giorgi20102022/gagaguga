@@ -5,9 +5,18 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+function isValidBlob(file: any): boolean {
+  return Boolean(
+    file &&
+    typeof file === "object" &&
+    typeof file.size === "number" &&
+    typeof file.slice === "function"
+  );
+}
+
 export const fileToBase64 = (file: File): Promise<string> =>
   new Promise((resolve, reject) => {
-    if (!file || !(file instanceof Blob)) {
+    if (!isValidBlob(file)) {
       reject(new Error("Invalid file object passed to fileToBase64"));
       return;
     }
