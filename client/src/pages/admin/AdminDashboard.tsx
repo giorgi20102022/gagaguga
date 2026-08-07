@@ -68,10 +68,6 @@ export default function AdminDashboard() {
     imageUrl: "",
     stock: "0",
     price: "",
-    discountType: "percentage" as "percentage" | "fixed" | "none",
-    discountPercent: "",
-    discountValue: "",
-    discountExpiry: "",
     deliveryFee: "0",
   });
 
@@ -253,29 +249,6 @@ export default function AdminDashboard() {
       const priceCents = Math.round(parseFloat(editForm.price || "0") * 100);
       const stock = parseInt(editForm.stock || "0");
 
-      let discountPrice: number | null | undefined = undefined;
-      let discountPercentage: number | null | undefined = undefined;
-      let discountExpiry: string | null | undefined = undefined;
-
-      if (editForm.discountType === "none") {
-        discountPrice = null;
-        discountPercentage = null;
-        discountExpiry = null;
-      } else if (editForm.discountType === "percentage") {
-        const pct = parseInt(editForm.discountPercent || "0");
-        const pctSafe = Number.isFinite(pct) ? Math.max(0, Math.min(100, pct)) : 0;
-        const discountAmount = Math.min(Math.round(priceCents * (pctSafe / 100)), maxDiscountCents);
-        discountPercentage = pctSafe;
-        discountPrice = Math.max(0, priceCents - discountAmount);
-        discountExpiry = editForm.discountExpiry || null;
-      } else if (editForm.discountType === "fixed") {
-        const fixedGEL = parseFloat(editForm.discountValue || "0");
-        const fixed = Math.min(Math.round(fixedGEL * 100), maxDiscountCents);
-        discountPrice = Math.max(0, priceCents - fixed);
-        discountPercentage = null;
-        discountExpiry = editForm.discountExpiry || null;
-      }
-
       const res = await fetch(`/api/admin/products/${editingProduct.id}?dealer=${dealer}`, {
         method: "PATCH",
         headers: {
@@ -289,9 +262,6 @@ export default function AdminDashboard() {
           imageUrl: editForm.imageUrl || null,
           stock,
           price: priceCents,
-          discountPrice,
-          discountPercentage,
-          discountExpiry,
           deliveryFee: dealer === "iron" && editForm.deliveryFee !== "" ? Math.round(parseFloat(editForm.deliveryFee || "0") * 100) : null,
         }),
       });
@@ -321,20 +291,10 @@ export default function AdminDashboard() {
   const handleSetDiscount = async () => {
     if (!discountingProduct) return;
     try {
-      let discountPrice = discountingProduct.price;
-      let percentage = 0;
-
-      if (discountType === "percentage") {
-        const pct = parseInt(discountValue);
-        const pctSafe = Number.isFinite(pct) ? Math.max(0, Math.min(100, pct)) : 0;
-        const discountAmount = Math.min(Math.round(discountingProduct.price * (pctSafe / 100)), maxDiscountCents);
-        percentage = pctSafe;
-        discountPrice = Math.max(0, discountingProduct.price - discountAmount);
-      } else {
-        const fixed = Math.min(Math.round(parseFloat(discountValue) * 100), maxDiscountCents);
-        discountPrice = Math.max(0, discountingProduct.price - fixed);
-        percentage = Math.round(((discountingProduct.price - discountPrice) / discountingProduct.price) * 100);
-      }
+      const pct = parseInt(discountValue);
+      const pctSafe = Number.isFinite(pct) ? Math.max(0, Math.min(100, pct)) : 0;
+      const discountAmount = Math.min(Math.round(discountingProduct.price * (pctSafe / 100)), maxDiscountCents);
+      const discountPrice = Math.max(0, discountingProduct.price - discountAmount);
 
       const res = await fetch(`/api/admin/products/${discountingProduct.id}/discount?dealer=${dealer}`, {
         method: "PATCH",
@@ -344,8 +304,7 @@ export default function AdminDashboard() {
         },
         body: JSON.stringify({
           discountPrice,
-          discountPercentage: percentage,
-          discountExpiry: discountExpiry || null,
+          discountPercentage: pctSafe,
         }),
       });
       if (!res.ok) throw new Error("Failed to set discount");
@@ -786,14 +745,6 @@ export default function AdminDashboard() {
                                       imageUrl: product.imageUrl || "",
                                       stock: String(product.stock ?? 0),
                                       price: String((product.price ?? 0) / 100),
-                                      discountType: product.discountPrice ? "fixed" : product.discountPercentage ? "percentage" : "none",
-                                      discountPercent: product.discountPercentage ? String(product.discountPercentage) : "",
-                                      discountValue: product.discountPrice
-                                        ? String(((product.price - (product.discountPrice ?? 0)) / 100).toFixed(2))
-                                        : product.discountPercentage
-                                          ? String(product.discountPercentage)
-                                          : "",
-                                      discountExpiry: product.discountExpiry ? String(product.discountExpiry).slice(0, 10) : "",
                                       deliveryFee: product.deliveryFee !== undefined && product.deliveryFee !== null ? String(product.deliveryFee / 100) : "0",
                                     });
                                   }}
@@ -812,20 +763,6 @@ export default function AdminDashboard() {
                                     <Input value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} className="h-11 rounded-xl" />
                                   </div>
                                   <div className="space-y-2">
-                                    <Label>აღწერა</Label>
-                                    <Textarea value={editForm.description} onChange={(e) => setEditForm({ ...editForm, description: e.target.value })} className="min-h-[120px] rounded-xl" />
-                                  </div>
-                                  <div className="grid grid-cols-2 gap-4">
-                                    <div className="space-y-2">
-                                      <Label>კატეგორია</Label>
-                                      <Input value={editForm.category} onChange={(e) => setEditForm({ ...editForm, category: e.target.value })} className="h-11 rounded-xl" />
-                                    </div>
-                                    <div className="space-y-2">
-                                      <Label>მარაგი</Label>
-                                      <Input type="number" value={editForm.stock} onChange={(e) => setEditForm({ ...editForm, stock: e.target.value })} className="h-11 rounded-xl" />
-                                    </div>
-                                  </div>
-                                  <div className="space-y-2">
                                     <Label>სურათის URL</Label>
                                     <Input value={editForm.imageUrl} onChange={(e) => setEditForm({ ...editForm, imageUrl: e.target.value })} className="h-11 rounded-xl" />
                                   </div>
@@ -841,88 +778,7 @@ export default function AdminDashboard() {
                                     </div>
                                   )}
 
-                                  <div className="space-y-2">
-                                    <Label>ფასდაკლება</Label>
-                                    <div className="grid grid-cols-3 gap-2 p-1 bg-muted rounded-xl">
-                                      <Button type="button" variant={editForm.discountType === "none" ? "default" : "ghost"} size="sm" onClick={() => setEditForm({ ...editForm, discountType: "none", discountPercent: "", discountValue: "", discountExpiry: "" })} className="rounded-lg">არა</Button>
-                                      <Button
-                                        type="button"
-                                        variant={editForm.discountType === "percentage" ? "default" : "ghost"}
-                                        size="sm"
-                                        onClick={() => {
-                                          const priceCents = Math.round(parseFloat(editForm.price || "0") * 100);
-                                          const pct = parseInt(editForm.discountPercent || "0");
-                                          const amountCents = calcCappedDiscountAmountCents(priceCents, pct);
-                                          setEditForm({
-                                            ...editForm,
-                                            discountType: "percentage",
-                                            discountValue: ((amountCents || 0) / 100).toFixed(2),
-                                          });
-                                        }}
-                                        className="rounded-lg"
-                                      >
-                                        %
-                                      </Button>
-                                      <Button type="button" variant={editForm.discountType === "fixed" ? "default" : "ghost"} size="sm" onClick={() => setEditForm({ ...editForm, discountType: "fixed", discountValue: editForm.discountValue || "" })} className="rounded-lg">₾</Button>
-                                    </div>
-                                  </div>
 
-                                  {editForm.discountType !== "none" && (
-                                    <div className="grid grid-cols-2 gap-4">
-                                      {editForm.discountType === "percentage" ? (
-                                        <>
-                                          <div className="space-y-2">
-                                            <Label>ფასდაკლება (%)</Label>
-                                            <Input
-                                              type="number"
-                                              value={editForm.discountPercent}
-                                              onChange={(e) => {
-                                                const priceCents = Math.round(parseFloat(editForm.price || "0") * 100);
-                                                const pct = parseInt(e.target.value || "0");
-                                                const pctSafe = Number.isFinite(pct) ? Math.max(0, Math.min(100, pct)) : 0;
-                                                const amountCents = calcCappedDiscountAmountCents(priceCents, pctSafe);
-                                                setEditForm({
-                                                  ...editForm,
-                                                  discountPercent: String(pctSafe),
-                                                  discountValue: ((amountCents || 0) / 100).toFixed(2),
-                                                });
-                                              }}
-                                              className="h-11 rounded-xl"
-                                            />
-                                          </div>
-                                          <div className="space-y-2">
-                                            <Label>მოაკლდება (₾) (max 300)</Label>
-                                            <Input readOnly value={editForm.discountValue} className="h-11 rounded-xl bg-muted" />
-                                          </div>
-                                        </>
-                                      ) : (
-                                        <>
-                                          <div className="space-y-2">
-                                            <Label>ფასდაკლება (₾) (max 300)</Label>
-                                            <Input
-                                              type="number"
-                                              step="0.01"
-                                              value={editForm.discountValue}
-                                              onChange={(e) => {
-                                                const raw = e.target.value;
-                                                const fixedCents = Math.min(Math.round(parseFloat(raw || "0") * 100), maxDiscountCents);
-                                                setEditForm({ ...editForm, discountValue: ((fixedCents || 0) / 100).toFixed(2) });
-                                              }}
-                                              className="h-11 rounded-xl"
-                                            />
-                                          </div>
-                                          <div className="space-y-2">
-                                            <Label></Label>
-                                            <Input readOnly value={""} className="h-11 rounded-xl bg-muted" />
-                                          </div>
-                                        </>
-                                      )}
-                                      <div className="space-y-2">
-                                        <Label>ვადის გასვლა (არასავალდებულო)</Label>
-                                        <Input type="date" value={editForm.discountExpiry} onChange={(e) => setEditForm({ ...editForm, discountExpiry: e.target.value })} className="h-11 rounded-xl" />
-                                      </div>
-                                    </div>
-                                  )}
                                 </div>
                                 <DialogFooter>
                                   <Button onClick={handleUpdatePrice} className="w-full h-12 rounded-xl font-bold">შენახვა</Button>
@@ -941,36 +797,15 @@ export default function AdminDashboard() {
                                   <DialogTitle>ფასდაკლების დაყენება: {product.name}</DialogTitle>
                                 </DialogHeader>
                                 <div className="py-4 space-y-4">
-                                  <div className="grid grid-cols-2 gap-2 p-1 bg-muted rounded-xl">
-                                    <Button 
-                                      variant={discountType === "percentage" ? "default" : "ghost"} 
-                                      size="sm" 
-                                      onClick={() => setDiscountType("percentage")}
-                                      className="rounded-lg"
-                                    >პროცენტული</Button>
-                                    <Button 
-                                      variant={discountType === "fixed" ? "default" : "ghost"} 
-                                      size="sm" 
-                                      onClick={() => setDiscountType("fixed")}
-                                      className="rounded-lg"
-                                    >ფიქსირებული</Button>
-                                  </div>
                                   <div className="space-y-2">
-                                    <Label>{discountType === "percentage" ? "ფასდაკლება (%)" : "ფასდაკლება (₾)"}</Label>
+                                    <Label>ფასდაკლება (%)</Label>
                                     <Input 
                                       type="number"
+                                      min={0}
+                                      max={100}
                                       value={discountValue}
                                       onChange={e => setDiscountValue(e.target.value)}
                                       className="h-12 rounded-xl text-lg font-bold"
-                                    />
-                                  </div>
-                                  <div className="space-y-2">
-                                    <Label>ვადის გასვლა (არასავალდებულო)</Label>
-                                    <Input 
-                                      type="date"
-                                      value={discountExpiry}
-                                      onChange={e => setDiscountExpiry(e.target.value)}
-                                      className="h-12 rounded-xl"
                                     />
                                   </div>
                                 </div>
