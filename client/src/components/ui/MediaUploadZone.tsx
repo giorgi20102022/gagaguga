@@ -225,6 +225,7 @@ function MediaUploadZoneInner({
           handleFile(file);
         } catch (err) {
           console.error("Error handling camera capture blob:", err);
+          alert('iOS Upload Error: ' + (err instanceof Error ? err.message : String(err)));
           onError?.("ფოტოს გადაღება ვერ მოხერხდა, სცადეთ თავიდან");
         } finally {
           cleanUpStream();
@@ -240,21 +241,28 @@ function MediaUploadZoneInner({
   }, [handleFile, cleanUpStream, onError]);
 
   const handleFileInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const input = e.target;
-    try {
-      const file = input?.files?.[0];
-      if (file) {
+  const input = e.target;
+  try {
+    const file = input?.files?.[0];
+    if (file) {
+      try {
         handleFile(file);
-      }
-    } catch (err) {
-      console.error("Error in handleFileInput:", err);
-      onError?.("ფოტოს წაკითხვა ვერ მოხერხდა, სცადეთ თავიდან");
-    } finally {
-      if (input) {
-        input.value = "";
+      } catch (err) {
+        console.error('[MediaUpload] handleFile threw:', err);
+        alert('iOS Upload Error: ' + (err instanceof Error ? err.message : String(err)));
+        onError?.('ფოტოს წაკითხვა ვერ მოხერხდა, სცადეთ თავიდან');
       }
     }
-  }, [handleFile, onError]);
+  } catch (err) {
+    console.error('[MediaUpload] handleFileInput error:', err);
+    alert('iOS Upload Error: ' + (err instanceof Error ? err.message : String(err)));
+    onError?.('ფოტოს წაკითხვა ვერ მოხერხდა, სცადეთ თავიდან');
+  } finally {
+    if (input) {
+      input.value = '';
+    }
+  }
+}, [handleFile, onError]);
 
   const cameraOverlay = isCameraOpen ? (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/95 p-4 sm:p-8">
