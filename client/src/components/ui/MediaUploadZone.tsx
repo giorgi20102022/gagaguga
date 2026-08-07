@@ -192,43 +192,69 @@ function MediaUploadZoneInner({
   }, [cameraStream, isCameraOpen]); // isCameraOpen included so effect re-runs after overlay mounts
 
   const capturePhoto = useCallback(() => {
-    if (!videoRef.current) return;
     const video = videoRef.current;
-    
-    let width = video.videoWidth;
-    let height = video.videoHeight;
-    const maxDim = 2000;
-    
-    if (width > maxDim || height > maxDim) {
-      const scale = Math.min(maxDim / width, maxDim / height);
-      width = Math.round(width * scale);
-      height = Math.round(height * scale);
-    }
+    if (!video) return;
 
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
+    try {
+      let width = video.videoWidth || 1280;
+      let height = video.videoHeight || 720;
+      if (width === 0 || height === 0) return;
 
-    ctx.drawImage(video, 0, 0, width, height);
-    canvas.toBlob((blob) => {
-      if (!blob) return;
-      const file = new File([blob], "capture.jpg", { type: "image/jpeg" });
-      handleFile(file);
+      const maxDim = 1600;
+      if (width > maxDim || height > maxDim) {
+        const scale = Math.min(maxDim / width, maxDim / height);
+        width = Math.round(width * scale);
+        height = Math.round(height * scale);
+      }
+
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        cleanUpStream();
+        setIsCameraOpen(false);
+        return;
+      }
+
+      ctx.drawImage(video, 0, 0, width, height);
+      canvas.toBlob((blob) => {
+        try {
+          if (!blob) throw new Error("Canvas export toBlob returned null");
+          const file = new File([blob], "capture.jpg", { type: "image/jpeg" });
+          handleFile(file);
+        } catch (err) {
+          console.error("Error handling camera capture blob:", err);
+          onError?.("ფოტოს გადაღება ვერ მოხერხდა, სცადეთ თავიდან");
+        } finally {
+          cleanUpStream();
+          setIsCameraOpen(false);
+        }
+      }, "image/jpeg", 0.75);
+    } catch (err) {
+      console.error("Error in capturePhoto:", err);
+      onError?.("ფოტოს გადაღება ვერ მოხერხდა, სცადეთ თავიდან");
       cleanUpStream();
       setIsCameraOpen(false);
-    }, "image/jpeg", 0.85);
-  }, [handleFile, cleanUpStream]);
+    }
+  }, [handleFile, cleanUpStream, onError]);
 
   const handleFileInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      handleFile(file);
+    const input = e.target;
+    try {
+      const file = input?.files?.[0];
+      if (file) {
+        handleFile(file);
+      }
+    } catch (err) {
+      console.error("Error in handleFileInput:", err);
+      onError?.("ფოტოს წაკითხვა ვერ მოხერხდა, სცადეთ თავიდან");
+    } finally {
+      if (input) {
+        input.value = "";
+      }
     }
-    // reset so the same file can be reselected
-    e.target.value = "";
-  }, [handleFile]);
+  }, [handleFile, onError]);
 
   const cameraOverlay = isCameraOpen ? (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/95 p-4 sm:p-8">

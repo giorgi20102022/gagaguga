@@ -6,6 +6,7 @@ import {
   revokeObjectUrl,
 } from "@/lib/imageUpload";
 import { fileToBase64 } from "@/lib/utils";
+import { toast } from "@/hooks/use-toast";
 
 interface UseMediaUploadOptions {
   /** Persisted base64 value from parent formData */
@@ -53,32 +54,54 @@ export function useMediaUpload({ storedValue, onPersist, onFileReady, onError }:
   }, []);
 
   const handleFile = useCallback(async (file: File) => {
-    if (!file) return;
-
-    onFileReadyRef.current?.(file);
-
-    try {
-      const instantUrl = await createPreviewUrl(file);
-      revokeObjectUrl(objectUrlRef.current);
-      objectUrlRef.current = instantUrl.startsWith("blob:") ? instantUrl : null;
-      setPreviewUrl(instantUrl);
-    } catch {
-      onErrorRef.current?.("ფაილის გადახედვა ვერ მოხერხდა");
+    if (!file || !(file instanceof Blob)) {
+      const msg = "ფოტოს წაკითხვა ვერ მოხერხდა, სცადეთ თავიდან";
+      console.warn("Invalid file object provided to handleFile:", file);
+      onErrorRef.current?.(msg);
+      toast({ title: "შეცდომა", description: msg, variant: "destructive" });
       return;
     }
 
+    try {
+      onFileReadyRef.current?.(file);
+    } catch (e) {
+      console.error("onFileReady callback error:", e);
+    }
+
     setIsPersisting(true);
-    void (async () => {
+
+    try {
+      // 1. Create preview URL safely
+      let instantUrl: string | null = null;
       try {
-        const prepared = await prepareFileForStorage(file);
-        const base64 = await fileToBase64(prepared);
-        onPersistRef.current(base64);
-      } catch {
-        onErrorRef.current?.("ფაილის ატვირთვა ვერ მოხერხდა. სცადეთ თავიდან.");
-      } finally {
-        setIsPersisting(false);
+        instantUrl = await createPreviewUrl(file);
+      } catch (err) {
+        console.warn("createPreviewUrl failed:", err);
       }
-    })();
+
+      if (instantUrl) {
+        revokeObjectUrl(objectUrlRef.current);
+        objectUrlRef.current = instantUrl.startsWith("blob:") ? instantUrl : null;
+        setPreviewUrl(instantUrl);
+      }
+
+      // 2. Prepare file & convert to base64 safely
+      const prepared = await prepareFileForStorage(file);
+      const base64 = await fileToBase64(prepared);
+
+      if (!base64) {
+        throw new Error("Base64 conversion produced empty string");
+      }
+
+      onPersistRef.current(base64);
+    } catch (err) {
+      console.error("File processing error in handleFile:", err);
+      const msg = "ფოტოს წაკითხვა ვერ მოხერხდა, სცადეთ თავიდან";
+      onErrorRef.current?.(msg);
+      toast({ title: "შეცდომა", description: msg, variant: "destructive" });
+    } finally {
+      setIsPersisting(false);
+    }
   }, []);
 
   const clearPreview = useCallback(() => {

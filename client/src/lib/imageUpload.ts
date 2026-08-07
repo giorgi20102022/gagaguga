@@ -2,9 +2,9 @@
 const PREVIEW_MAX_DIMENSION = 1280;
 const PREVIEW_JPEG_QUALITY = 0.82;
 
-/** Hard limits for base64 storage — enforced on EVERY image upload */
-const STORAGE_MAX_DIMENSION = 1200;
-const STORAGE_JPEG_QUALITY = 0.70;
+/** Hard limits for base64 storage — enforced on EVERY image upload (safely capped for mobile Chrome/WebKit) */
+const STORAGE_MAX_DIMENSION = 1600;
+const STORAGE_JPEG_QUALITY = 0.75;
 
 export function getImagePreviewSrc(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -16,9 +16,10 @@ export function getImagePreviewSrc(value: unknown): string | undefined {
 
 let heic2anyModule: any = null;
 async function convertHeicToJpeg(file: File): Promise<File> {
+  if (!file || !(file instanceof Blob)) return file;
   const isHeic = file.type === "image/heic" || 
                  file.type === "image/heif" || 
-                 /\.(heic|heif)$/i.test(file.name);
+                 /\.(heic|heif)$/i.test(file.name || "");
   if (!isHeic) return file;
 
   try {
@@ -32,7 +33,7 @@ async function convertHeicToJpeg(file: File): Promise<File> {
       quality: STORAGE_JPEG_QUALITY
     });
     const blob = Array.isArray(result) ? result[0] : result;
-    const baseName = file.name.replace(/\.[^.]+$/, "") || "upload";
+    const baseName = file.name ? file.name.replace(/\.[^.]+$/, "") : "upload";
     return new File([blob], `${baseName}.jpg`, { type: "image/jpeg" });
   } catch (err) {
     console.error("HEIC conversion failed, using original file:", err);
@@ -42,15 +43,22 @@ async function convertHeicToJpeg(file: File): Promise<File> {
 
 function loadImageFromFile(file: File): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(file);
+    let url = "";
+    try {
+      url = URL.createObjectURL(file);
+    } catch (err) {
+      reject(err);
+      return;
+    }
+
     const img = new Image();
     img.onload = () => {
       URL.revokeObjectURL(url);
       resolve(img);
     };
-    img.onerror = () => {
+    img.onerror = (e) => {
       URL.revokeObjectURL(url);
-      reject(new Error("Failed to load image"));
+      reject(e || new Error("Failed to load image"));
     };
     img.src = url;
   });
@@ -60,13 +68,17 @@ function canvasToBlob(
   canvas: HTMLCanvasElement,
   type: string,
   quality?: number,
- ): Promise<Blob> {
+): Promise<Blob> {
   return new Promise((resolve, reject) => {
-    canvas.toBlob(
-      (blob) => (blob ? resolve(blob) : reject(new Error("Canvas export failed"))),
-      type,
-      quality,
-    );
+    try {
+      canvas.toBlob(
+        (blob) => (blob ? resolve(blob) : reject(new Error("Canvas export failed"))),
+        type,
+        quality,
+      );
+    } catch (err) {
+      reject(err);
+    }
   });
 }
 
@@ -75,45 +87,50 @@ export async function createPreviewUrl(file: File): Promise<string> {
   try {
     const processedFile = await convertHeicToJpeg(file);
     const img = await loadImageFromFile(processedFile);
-    const scale = Math.min(
-      1,
-      PREVIEW_MAX_DIMENSION / Math.max(img.naturalWidth, img.naturalHeight),
-    );
-    const width = Math.max(1, Math.round(img.naturalWidth * scale));
-    const height = Math.max(1, Math.round(img.naturalHeight * scale));
+    const naturalW = img.naturalWidth || 1;
+    const naturalH = img.naturalHeight || 1;
+    const scale = Math.min(1, PREVIEW_MAX_DIMENSION / Math.max(naturalW, naturalH));
+    const width = Math.max(1, Math.round(naturalW * scale));
+    const height = Math.max(1, Math.round(naturalH * scale));
 
     const canvas = document.createElement("canvas");
     canvas.width = width;
     canvas.height = height;
     const ctx = canvas.getContext("2d");
-    if (!ctx) return URL.createObjectURL(processedFile);
+    if (!ctx) {
+      try {
+        return URL.createObjectURL(processedFile);
+      } catch {
+        return "";
+      }
+    }
 
     ctx.drawImage(img, 0, 0, width, height);
     const blob = await canvasToBlob(canvas, "image/jpeg", PREVIEW_JPEG_QUALITY);
     return URL.createObjectURL(blob);
-  } catch {
-    return URL.createObjectURL(file);
+  } catch (err) {
+    console.warn("createPreviewUrl fallback due to error:", err);
+    try {
+      return URL.createObjectURL(file);
+    } catch {
+      return "";
+    }
   }
 }
 
 /**
- * Resize and compress every image to a maximum of 2000px on its longest edge
- * at JPEG quality 0.85 before base64 persistence.
- *
- * This cap is unconditional — it applies regardless of the original file size
- * so that photos from high-res sensors (108 MP, iPhone Pro, etc.) never
- * produce a base64 payload large enough to crash the 18 MB server limit.
+ * Resize and compress every image to a maximum of 1600px on its longest edge
+ * at JPEG quality 0.75 before base64 persistence.
  */
 export async function prepareFileForStorage(file: File): Promise<File> {
   try {
     const processedFile = await convertHeicToJpeg(file);
     const img = await loadImageFromFile(processedFile);
-    const scale = Math.min(
-      1,
-      STORAGE_MAX_DIMENSION / Math.max(img.naturalWidth, img.naturalHeight),
-    );
-    const width = Math.max(1, Math.round(img.naturalWidth * scale));
-    const height = Math.max(1, Math.round(img.naturalHeight * scale));
+    const naturalW = img.naturalWidth || 1;
+    const naturalH = img.naturalHeight || 1;
+    const scale = Math.min(1, STORAGE_MAX_DIMENSION / Math.max(naturalW, naturalH));
+    const width = Math.max(1, Math.round(naturalW * scale));
+    const height = Math.max(1, Math.round(naturalH * scale));
 
     const canvas = document.createElement("canvas");
     canvas.width = width;
@@ -123,15 +140,20 @@ export async function prepareFileForStorage(file: File): Promise<File> {
 
     ctx.drawImage(img, 0, 0, width, height);
     const blob = await canvasToBlob(canvas, "image/jpeg", STORAGE_JPEG_QUALITY);
-    const baseName = processedFile.name.replace(/\.[^.]+$/, "") || "upload";
+    const baseName = processedFile.name ? processedFile.name.replace(/\.[^.]+$/, "") : "upload";
     return new File([blob], `${baseName}.jpg`, { type: "image/jpeg" });
-  } catch {
+  } catch (err) {
+    console.warn("prepareFileForStorage failed, returning original file:", err);
     return file;
   }
 }
 
 export function revokeObjectUrl(url: string | null | undefined) {
   if (url?.startsWith("blob:")) {
-    URL.revokeObjectURL(url);
+    try {
+      URL.revokeObjectURL(url);
+    } catch {
+      // ignore revoke error
+    }
   }
 }

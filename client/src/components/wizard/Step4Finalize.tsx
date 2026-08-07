@@ -353,44 +353,67 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
   };
 
   const handleFinish = async () => {
-    const newErrors: Record<string, boolean> = {};
-    if (!data.cityDistrict) newErrors.cityDistrict = true;
-    if (!data.addressVillage || data.addressVillage.trim() === "") newErrors.addressVillage = true;
-    if (!data.receiptPhoto) newErrors.receiptPhoto = true;
-    const phoneRequired = true;
-    const smsRequired = true;
-    if (phoneRequired && !data.phone) newErrors.phone = true;
-    else if (smsRequired && data.phone && !isSmsVerified) newErrors.phone = true;
-
-    if (Object.keys(newErrors).length > 0) {
-      setErrors(newErrors);
-      const firstErrorField = (Object.keys(newErrors) as (keyof typeof fieldRefs)[]).find(
-        field => newErrors[field]
-      );
-      if (firstErrorField && fieldRefs[firstErrorField].current) {
-        fieldRefs[firstErrorField].current?.scrollIntoView({ behavior: "smooth", block: "center" });
-      }
-      return;
-    }
-
-    setIsCompilingSignature(true);
-    let signatureFile: File | undefined = undefined;
     try {
+      const newErrors: Record<string, boolean> = {};
+      if (!data.cityDistrict) newErrors.cityDistrict = true;
+      if (!data.addressVillage || data.addressVillage.trim() === "") newErrors.addressVillage = true;
+      if (!data.receiptPhoto) newErrors.receiptPhoto = true;
+      const phoneRequired = true;
+      const smsRequired = true;
+      if (phoneRequired && !data.phone) newErrors.phone = true;
+      else if (smsRequired && data.phone && !isSmsVerified) newErrors.phone = true;
+
+      if (Object.keys(newErrors).length > 0) {
+        setErrors(newErrors);
+        const firstErrorField = (Object.keys(newErrors) as (keyof typeof fieldRefs)[]).find(
+          field => newErrors[field]
+        );
+        if (firstErrorField && fieldRefs[firstErrorField].current) {
+          fieldRefs[firstErrorField].current?.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+        return;
+      }
+
+      setIsCompilingSignature(true);
+      let signatureFile: File | undefined = undefined;
+      
       const canvas = signatureCanvasRef.current;
       if (canvas) {
-        const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+        // Prevent infinite hang on iOS Safari with a timeout
+        const blob = await new Promise<Blob | null>((resolve) => {
+          let resolved = false;
+          const timeout = setTimeout(() => {
+            if (!resolved) {
+              resolved = true;
+              console.warn("canvas.toBlob timed out");
+              resolve(null);
+            }
+          }, 3000);
+          
+          canvas.toBlob((b) => {
+            if (resolved) return;
+            resolved = true;
+            clearTimeout(timeout);
+            resolve(b);
+          }, 'image/png');
+        });
+        
         if (blob) {
           signatureFile = new File([blob], 'digital-signature.png', { type: 'image/png' });
           updateData({ signatureFile } as any);
         }
       }
-    } catch (err) {
-      console.error("Signature compilation failed:", err);
-    } finally {
+      
       setIsCompilingSignature(false);
+      onSubmit(signatureFile);
+    } catch (err: any) {
+      setIsCompilingSignature(false);
+      console.error("UI Submit Error:", err);
+      const msg = err?.message || String(err);
+      if (/iPad|iPhone|iPod/.test(navigator.userAgent)) {
+        alert("UI შეცდომა: " + msg);
+      }
     }
-
-    onSubmit(signatureFile);
   };
 
   const addressesComplete = Boolean(
