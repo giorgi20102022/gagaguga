@@ -41,8 +41,13 @@ async function ensureSignatureFontLoaded(fontSizePx: number): Promise<void> {
   const anyDoc = document as any;
   if (!anyDoc?.fonts?.load) return;
   try {
-    await anyDoc.fonts.load(`normal ${fontSizePx}px "${SIGNATURE_FONT_FAMILY}"`, "abcdefghijklmnopqrstuvwxyz");
-    await anyDoc.fonts.ready;
+    await Promise.race([
+      Promise.all([
+        anyDoc.fonts.load(`normal ${fontSizePx}px "${SIGNATURE_FONT_FAMILY}"`, "abcdefghijklmnopqrstuvwxyz"),
+        anyDoc.fonts.ready,
+      ]),
+      new Promise((resolve) => setTimeout(resolve, 500)),
+    ]);
   } catch {
     // ignore font load errors; canvas will fall back to default font
   }

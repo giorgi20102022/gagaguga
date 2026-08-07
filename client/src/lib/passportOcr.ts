@@ -71,52 +71,36 @@ export function mapPassportExtracted(raw: unknown): PassportExtractedData | null
 }
 
 async function postPassportFormData(formData: FormData, signal: AbortSignal): Promise<unknown> {
-  try {
-    const directRes = await fetch(PASSPORT_N8N_WEBHOOK_URL, {
-      method: "POST",
-      body: formData,
-      signal,
-    });
-
-    if (!directRes.ok) {
-      const errText = await directRes.text().catch(() => "");
-      throw new Error(errText || `n8n OCR failed (${directRes.status})`);
-    }
-
-    return directRes.json();
-  } catch (directError) {
-    console.warn("[Passport OCR] Direct n8n webhook failed, using server proxy:", directError);
-
-    const proxyForm = new FormData();
-    const file = formData.get("data") ?? formData.get("file");
-    if (!(file instanceof File)) {
-      throw directError instanceof Error
-        ? directError
-        : new Error("Passport file missing for OCR proxy");
-    }
+  const proxyForm = new FormData();
+  const file = formData.get("data") ?? formData.get("file");
+  if (file instanceof File) {
     proxyForm.append("data", file, file.name || "passport.jpg");
-
-    const proxyRes = await fetch("/api/vision/extract-passport-file", {
-      method: "POST",
-      body: proxyForm,
-      credentials: "include",
-      signal,
+  } else {
+    formData.forEach((value, key) => {
+      proxyForm.append(key, value);
     });
-
-    if (!proxyRes.ok) {
-      let message = `OCR proxy failed (${proxyRes.status})`;
-      try {
-        const errJson = await proxyRes.json();
-        message = errJson.message || errJson.error || message;
-      } catch {
-        const errText = await proxyRes.text().catch(() => "");
-        if (errText) message = errText;
-      }
-      throw new Error(message);
-    }
-
-    return proxyRes.json();
   }
+
+  const proxyRes = await fetch("/api/vision/extract-passport-file", {
+    method: "POST",
+    body: proxyForm,
+    credentials: "include",
+    signal,
+  });
+
+  if (!proxyRes.ok) {
+    let message = `OCR proxy failed (${proxyRes.status})`;
+    try {
+      const errJson = await proxyRes.json();
+      message = errJson.message || errJson.error || message;
+    } catch {
+      const errText = await proxyRes.text().catch(() => "");
+      if (errText) message = errText;
+    }
+    throw new Error(message);
+  }
+
+  return proxyRes.json();
 }
 
 /** Sends passport image to n8n OCR immediately after capture. Non-blocking for UI thread. */
