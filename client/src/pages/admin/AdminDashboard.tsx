@@ -72,6 +72,7 @@ export default function AdminDashboard() {
     discountPercent: "",
     discountValue: "",
     discountExpiry: "",
+    deliveryFee: "0",
   });
 
   // Discount State
@@ -291,6 +292,7 @@ export default function AdminDashboard() {
           discountPrice,
           discountPercentage,
           discountExpiry,
+          deliveryFee: dealer === "iron" && editForm.deliveryFee !== "" ? Math.round(parseFloat(editForm.deliveryFee || "0") * 100) : null,
         }),
       });
       if (!res.ok) {
@@ -792,6 +794,7 @@ export default function AdminDashboard() {
                                           ? String(product.discountPercentage)
                                           : "",
                                       discountExpiry: product.discountExpiry ? String(product.discountExpiry).slice(0, 10) : "",
+                                      deliveryFee: product.deliveryFee !== undefined && product.deliveryFee !== null ? String(product.deliveryFee / 100) : "0",
                                     });
                                   }}
                                   className="h-8 w-8 rounded-lg"
@@ -830,6 +833,13 @@ export default function AdminDashboard() {
                                     <Label>ფასი (₾)</Label>
                                     <Input type="number" step="0.01" value={editForm.price} onChange={(e) => { setEditForm({ ...editForm, price: e.target.value }); setNewPrice(e.target.value); }} className="h-11 rounded-xl" />
                                   </div>
+
+                                  {dealer === "iron" && (
+                                    <div className="space-y-2">
+                                      <Label>მიტანის საფასური (₾)</Label>
+                                      <Input type="number" step="0.01" value={editForm.deliveryFee} onChange={(e) => setEditForm({ ...editForm, deliveryFee: e.target.value })} className="h-11 rounded-xl" />
+                                    </div>
+                                  )}
 
                                   <div className="space-y-2">
                                     <Label>ფასდაკლება</Label>

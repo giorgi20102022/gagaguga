@@ -34,6 +34,7 @@ export const products = pgTable(
     discountPrice: integer("discount_price"),
     discountPercentage: integer("discount_percentage"),
     discountExpiry: timestamp("discount_expiry"),
+    deliveryFee: integer("delivery_fee"),
   },
   (table) => ({
     dealerNameUnique: uniqueIndex("products_dealer_id_name_unique").on(

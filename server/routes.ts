@@ -2083,6 +2083,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
           discountPrice: z.coerce.number().int().optional().nullable(),
           discountPercentage: z.coerce.number().int().optional().nullable(),
           discountExpiry: z.coerce.string().optional().nullable(),
+          deliveryFee: z.coerce.number().int().optional().nullable(),
         })
         .parse(req.body);
 
