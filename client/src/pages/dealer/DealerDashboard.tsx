@@ -304,7 +304,7 @@ export default function DealerDashboard() {
         signature: signatureBase64,
         digitalConsent: formData.digitalConsent !== false,
         dealerEmail: dealer.email,
-        
+
         // Webhook calculations
         itemPrice,
         totalPrice,
@@ -352,7 +352,7 @@ export default function DealerDashboard() {
 
       if (response.status === 202 || response.data?.status === "queued") {
         setLoadingMessage("თქვენი მოთხოვნა რიგშია. გთხოვთ, არ დახუროთ გვერდი, მიმდინარეობს დამუშავება...");
-        
+
         const trackingId = response.data?.trackingId || response.data?.id;
         if (trackingId) {
           let isCompleted = false;
@@ -360,17 +360,17 @@ export default function DealerDashboard() {
             await new Promise(r => setTimeout(r, 3000));
             const pollRes = await axios.get(`/api/workspace/status/${trackingId}`);
             if (pollRes.data?.status === "completed" || pollRes.data?.success) {
-               isCompleted = true;
+              isCompleted = true;
             } else if (pollRes.data?.status === "error" || pollRes.data?.success === false) {
-               throw new Error(pollRes.data?.message || "დამუშავების შეცდომა");
+              throw new Error(pollRes.data?.message || "დამუშავების შეცდომა");
             }
           }
         } else {
-           // If backend just returned 202 but didn't provide a way to poll, we assume 
-           // they might stream the response over the same connection, which would have resolved with 200.
-           // Since it resolved with 202 and we have no tracking ID, we exit to keep UI loading
-           // so the user knows it's queued.
-           return;
+          // If backend just returned 202 but didn't provide a way to poll, we assume 
+          // they might stream the response over the same connection, which would have resolved with 200.
+          // Since it resolved with 202 and we have no tracking ID, we exit to keep UI loading
+          // so the user knows it's queued.
+          return;
         }
       }
 
@@ -433,44 +433,44 @@ export default function DealerDashboard() {
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <div className="sticky top-0 z-50 w-full">
-      {/* Workspace Navbar — no admin links, only dealer info + logout */}
-      <nav className="w-full border-b border-white/20 bg-background/60 backdrop-blur-xl transition-all">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex h-16 items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div
-                className="flex items-center gap-3 cursor-pointer"
-                onClick={() => { setStep(1); window.scrollTo({ top: 0, behavior: "smooth" }); }}
-              >
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                  <LayoutDashboard className="h-5 w-5" />
-                </div>
-                <div>
-                  <span className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-foreground to-foreground/70">
-                    {dealer.name}
-                  </span>
-                  <span className="block text-xs text-muted-foreground -mt-0.5">სამუშაო პორტალი</span>
+        {/* Workspace Navbar — no admin links, only dealer info + logout */}
+        <nav className="w-full border-b border-white/20 bg-background/60 backdrop-blur-xl transition-all">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="flex h-16 items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div
+                  className="flex items-center gap-3 cursor-pointer"
+                  onClick={() => { setStep(1); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                >
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                    <LayoutDashboard className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <span className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-foreground to-foreground/70">
+                      {dealer.name}
+                    </span>
+                    <span className="block text-xs text-muted-foreground -mt-0.5">სამუშაო პორტალი</span>
+                  </div>
                 </div>
               </div>
-            </div>
 
-            <div className="flex items-center gap-4">
-              <div className="hidden md:flex flex-col items-end">
-                <span className="text-sm font-semibold">{dealer.email}</span>
-                <span className="text-xs text-muted-foreground">ავტორიზებული დილერი</span>
+              <div className="flex items-center gap-4">
+                <div className="hidden md:flex flex-col items-end">
+                  <span className="text-sm font-semibold">{dealer.email}</span>
+                  <span className="text-xs text-muted-foreground">ავტორიზებული დილერი</span>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => logout()}
+                  className="text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                >
+                  <LogOut className="h-5 w-5" />
+                </Button>
               </div>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => logout()}
-                className="text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-              >
-                <LogOut className="h-5 w-5" />
-              </Button>
             </div>
           </div>
-        </div>
-      </nav>
+        </nav>
       </div>
 
       {/* Wizard — the operational sales flow */}
@@ -527,7 +527,7 @@ export default function DealerDashboard() {
       {isStatusModalOpen && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-[100] flex items-center justify-center p-4">
           <div className="bg-card border border-white/10 rounded-3xl p-8 max-w-md w-full relative shadow-2xl animate-in zoom-in-95 duration-200">
-            <button 
+            <button
               onClick={() => {
                 setIsStatusModalOpen(false);
                 if (submissionStatus === 'success') {
@@ -578,7 +578,7 @@ export default function DealerDashboard() {
                   </div>
                 </>
               )}
-              <Button 
+              <Button
                 onClick={() => {
                   setIsStatusModalOpen(false);
                   if (submissionStatus === 'success') {

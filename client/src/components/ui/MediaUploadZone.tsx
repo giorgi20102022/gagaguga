@@ -295,7 +295,7 @@ function MediaUploadZoneInner({
         ref={cameraInputRef}
         id={`${baseInputId}-camera`}
         type="file"
-        accept="image/*"
+        accept="image/jpeg,image/png,image/webp"
         capture="environment"
         className="hidden"
         onChange={handleFileInput}
@@ -305,7 +305,7 @@ function MediaUploadZoneInner({
         ref={galleryInputRef}
         id={`${baseInputId}-gallery`}
         type="file"
-        accept="image/*"
+        accept="image/jpeg,image/png,image/webp"
         className="hidden"
         onChange={handleFileInput}
         disabled={disabled || isBusy}

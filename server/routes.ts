@@ -81,6 +81,7 @@ function calculateConditionalDiscountPricing(params: {
   pensioner: boolean;
   deliveryFee: number;
   ironPlusFee: number;
+  isIronPlusDealer?: boolean;
 }) {
   const basePrice = params.product.price / 100;
   const hasPriorityStatus = params.sociallyVulnerable || params.pensioner;
@@ -92,15 +93,29 @@ function calculateConditionalDiscountPricing(params: {
     subsidyRate = (adminPct && adminPct > 0) ? adminPct / 100 : 0.75;
   }
 
-  // Calculate raw subsidy and apply 300 GEL cap
-  let subsidyAmount = basePrice * subsidyRate;
-  if (subsidyAmount > MAX_SUBSIDY_GEL) {
-    subsidyAmount = MAX_SUBSIDY_GEL;
-    subsidyRate = basePrice > 0 ? subsidyAmount / basePrice : 0;
-  }
+  const isB1MZ18IronPlus = params.isIronPlusDealer && params.product.name.includes("B1-MZ-18");
 
-  const discountedPrice = Math.max(0, basePrice - subsidyAmount);
-  const finalPayable = Math.max(0, discountedPrice + Math.max(0, params.deliveryFee) + Math.max(0, params.ironPlusFee));
+  let subsidyAmount: number;
+  let finalPayable: number;
+
+  if (isB1MZ18IronPlus) {
+    // Subsidy base includes delivery fee so the cap applies to the full amount
+    const base = basePrice + Math.max(0, params.deliveryFee);
+    const calculatedDiscount = base * subsidyRate;
+    const actualDiscount = Math.min(calculatedDiscount, MAX_SUBSIDY_GEL);
+    subsidyAmount = actualDiscount;
+    subsidyRate = base > 0 ? actualDiscount / base : 0;
+    finalPayable = Math.max(0, base - actualDiscount + Math.max(0, params.ironPlusFee));
+  } else {
+    // Standard logic
+    let rawSubsidy = basePrice * subsidyRate;
+    if (rawSubsidy > MAX_SUBSIDY_GEL) {
+      rawSubsidy = MAX_SUBSIDY_GEL;
+      subsidyRate = basePrice > 0 ? rawSubsidy / basePrice : 0;
+    }
+    subsidyAmount = rawSubsidy;
+    finalPayable = Math.max(0, basePrice - subsidyAmount + Math.max(0, params.deliveryFee) + Math.max(0, params.ironPlusFee));
+  }
 
   return {
     price: Number(basePrice.toFixed(2)),
@@ -1576,13 +1591,15 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
       const dealerName = dealerRecord?.name || input.supplierName || "";
       const dealerIdentificationCode = (dealerRecord as any)?.identificationCode || "";
 
+      const isIronPlus = dealerKey === "iron" || dealerKey === "iron_plus" || (input as any).dealerType === "iron_plus" || (dealerRecord && (dealerRecord.key === "iron" || dealerRecord.key === "iron_plus"));
+
       const allProducts = await storage.getProducts(dealerId);
       const selectedProduct = allProducts.find(
         (p) => p.name === input.model || p.id.toString() === input.model,
       );
 
-      const deliveryFee = dealerKey === "iron" ? Math.max(0, Number(input.deliveryFee ?? 0)) : 0;
-      const ironPlusFee = dealerKey === "iron" && input.model.includes("L1-MZ-27") && input.ironPlus ? 100 : 0;
+      const deliveryFee = isIronPlus ? Math.max(0, Number(input.deliveryFee ?? 0)) : 0;
+      const ironPlusFee = isIronPlus && input.model.includes("L1-MZ-27") && input.ironPlus ? 100 : 0;
 
       const pricing = selectedProduct
         ? calculateConditionalDiscountPricing({
@@ -1591,6 +1608,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
           pensioner: Boolean(input.pensioner),
           deliveryFee,
           ironPlusFee,
+          isIronPlusDealer: isIronPlus,
         })
         : {
           price: input.price,
@@ -1630,7 +1648,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
 
       const supplierProfile = dealerIdentificationCode;
 
-      const isIronPlus = dealerKey === "iron" || dealerKey === "iron_plus" || (input as any).dealerType === "iron_plus" || (dealerRecord && (dealerRecord.key === "iron" || dealerRecord.key === "iron_plus"));
+
       const itemPrice = Number(input.price || 0);
       const deliveryFeeVal = Number(deliveryFee);
       const isDeliverySelected = deliveryFeeVal > 0;
