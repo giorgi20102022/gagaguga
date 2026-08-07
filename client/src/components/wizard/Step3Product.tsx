@@ -45,14 +45,7 @@ export function Step3ProductInner({ data, updateData, onNext, onBack, dealerKey:
   const [verifiedProductName, setVerifiedProductName] = useState<string | null>(() => data?.verifiedProductName || null);
   const [ovenCode, setOvenCode] = useState(() => data?.ovenCode || (isGorgiaUser ? String(data?.supplierId || "") : ""));
 
-  const DELIVERY_FEE_BY_MODEL: Record<string, number> = {
-    "A1-MZ-08": 100,
-    "B1-MZ-18": 70,
-    "F1-MZ-25": 70,
-    "G1-MZ-26": 100,
-    "L1-MZ-27": 100,
-    "C1 ბუხარი": 200,
-  };
+  // Dynamic delivery fee is now used from the database
 
   // Auto-fill supplierName from dealer session name (read-only source of truth)
   useEffect(() => {
@@ -463,10 +456,7 @@ export function Step3ProductInner({ data, updateData, onNext, onBack, dealerKey:
               const displayPrice = Math.max(0, basePrice - cardSubsidy);
               const hasDiscount = cardRate > 0;
 
-              let deliveryFeeForModel = isIronPlusDealer ? DELIVERY_FEE_BY_MODEL[model.name] ?? 0 : 0;
-              if (isIronPlusDealer && model.name.includes('L1-MZ-27')) {
-                deliveryFeeForModel = 100;
-              }
+              const deliveryFeeForModel = isIronPlusDealer && model.deliveryFee ? model.deliveryFee / 100 : 0;
               const isDeliverySelected = isSelected && deliveryFeeForModel > 0 && Number(data.deliveryFee ?? 0) === deliveryFeeForModel;
 
               return (
