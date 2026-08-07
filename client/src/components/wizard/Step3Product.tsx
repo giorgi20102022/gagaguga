@@ -263,6 +263,10 @@ export function Step3ProductInner({ data, updateData, onNext, onBack, dealerKey:
 
   const MAX_SUBSIDY_GEL = 300;
 
+  // Returns true when the selected product is B1-MZ-18 and dealer is Iron+
+  const isB1MZ18IronPlus = (modelName: string | undefined) =>
+    isIronPlusDealer && !!(modelName && modelName.includes("B1-MZ-18"));
+
   // Calculate pricing whenever model or status changes
   useEffect(() => {
     if (!data.model || products.length === 0) return;
@@ -281,19 +285,34 @@ export function Step3ProductInner({ data, updateData, onNext, onBack, dealerKey:
       subsidyRate = (adminPct && adminPct > 0) ? adminPct / 100 : 0.75;
     }
 
-    // Apply 300 GEL subsidy cap
-    let subsidyAmount = price * subsidyRate;
-    if (subsidyAmount > MAX_SUBSIDY_GEL) {
-      subsidyAmount = MAX_SUBSIDY_GEL;
-      subsidyRate = price > 0 ? subsidyAmount / price : 0;
-    }
-
-    let finalPayable = Math.max(0, price - subsidyAmount);
-
     const rawDeliveryFee = Number(data.deliveryFee ?? 0);
     const deliveryFee = isIronPlusDealer ? Math.max(0, rawDeliveryFee) : 0;
     const ironPlusFee = (data.model && data.model.includes("L1-MZ-27") && data.ironPlus && isIronPlusDealer) ? 100 : 0;
-    finalPayable = Math.max(0, finalPayable + deliveryFee + ironPlusFee);
+
+    let subsidyAmount: number;
+    let finalPayable: number;
+
+    if (isB1MZ18IronPlus(data.model)) {
+      // ── B1-MZ-18 (Iron+ only) ──────────────────────────────────────────────
+      // Subsidy base includes delivery fee so the cap applies to the full amount
+      // the customer would otherwise pay.
+      const base = price + deliveryFee;
+      const calculatedDiscount = base * subsidyRate;
+      const actualDiscount = Math.min(calculatedDiscount, MAX_SUBSIDY_GEL);
+      subsidyAmount = actualDiscount;
+      // Recalculate effective rate against base for display purposes
+      subsidyRate = base > 0 ? actualDiscount / base : 0;
+      finalPayable = Math.max(0, base - actualDiscount + ironPlusFee);
+    } else {
+      // ── Standard logic for all other products ──────────────────────────────
+      let rawSubsidy = price * subsidyRate;
+      if (rawSubsidy > MAX_SUBSIDY_GEL) {
+        rawSubsidy = MAX_SUBSIDY_GEL;
+        subsidyRate = price > 0 ? rawSubsidy / price : 0;
+      }
+      subsidyAmount = rawSubsidy;
+      finalPayable = Math.max(0, price - subsidyAmount + deliveryFee + ironPlusFee);
+    }
 
     updateData({
       price,
