@@ -164,6 +164,32 @@ function Step1IdentityInner({ data, updateData, onNext }: Props) {
     setError(null);
     setIsScanning(true);
 
+    // Helper to compress image Blob to max 1200px dimension and 0.7 quality
+    const compressBlob = async (blob: Blob): Promise<Blob> => {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+          const maxDim = 1200;
+          const ratio = Math.min(1, maxDim / Math.max(img.naturalWidth, img.naturalHeight));
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.round(img.naturalWidth * ratio);
+          canvas.height = Math.round(img.naturalHeight * ratio);
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve(blob);
+            return;
+          }
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          canvas.toBlob((compressed) => {
+            if (compressed) resolve(compressed);
+            else resolve(blob);
+          }, 'image/jpeg', 0.7);
+        };
+        img.onerror = (err) => reject(err);
+        img.src = URL.createObjectURL(blob);
+      });
+    };
+
     try {
       // iOS Safari silently drops fetch() with large JSON bodies (base64 images > ~2MB).
       // Fix: send as multipart FormData — iOS handles this reliably at any size.
@@ -176,8 +202,11 @@ function Step1IdentityInner({ data, updateData, onNext }: Props) {
       };
 
       const formData = new FormData();
-      formData.append("frontImage", base64ToBlob(data.idFront), "front.jpg");
-      formData.append("backImage", base64ToBlob(data.idBack), "back.jpg");
+      // Compress images before appending to FormData
+      const frontBlob = await compressBlob(base64ToBlob(data.idFront));
+      const backBlob = await compressBlob(base64ToBlob(data.idBack));
+      formData.append("frontImage", frontBlob, "front.jpg");
+      formData.append("backImage", backBlob, "back.jpg");
 
       const res = await fetch("/api/vision/extract-id", {
         method: "POST",
@@ -229,8 +258,9 @@ function Step1IdentityInner({ data, updateData, onNext }: Props) {
       applyExtractedIdentity(extracted);
       onNext();
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "მონაცემების ამოკითხვა ვერ მოხერხდა";
-      setError(msg);
+        alert("FRONTEND CRASH BEFORE FETCH: " + ((e as any)?.message ? (e as any).message : JSON.stringify(e)));
+        console.error("Client side failure:", e);
+        setError(e instanceof Error ? e.message : "მონაცემების ამოკითხვა ვერ მოხერხდა");
     } finally {
       setIsScanning(false);
     }
