@@ -165,11 +165,25 @@ function Step1IdentityInner({ data, updateData, onNext }: Props) {
     setIsScanning(true);
 
     try {
+      // iOS Safari silently drops fetch() with large JSON bodies (base64 images > ~2MB).
+      // Fix: send as multipart FormData — iOS handles this reliably at any size.
+      const base64ToBlob = (b64: string, mime = "image/jpeg"): Blob => {
+        const parts = b64.split(",");
+        const raw = atob(parts.length > 1 ? parts[1] : parts[0]);
+        const buf = new Uint8Array(raw.length);
+        for (let i = 0; i < raw.length; i++) buf[i] = raw.charCodeAt(i);
+        return new Blob([buf], { type: mime });
+      };
+
+      const formData = new FormData();
+      formData.append("frontImage", base64ToBlob(data.idFront), "front.jpg");
+      formData.append("backImage", base64ToBlob(data.idBack), "back.jpg");
+
       const res = await fetch("/api/vision/extract-id", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        // Do NOT set Content-Type header — browser must set it with multipart boundary
         credentials: "include",
-        body: JSON.stringify({ frontImage: data.idFront, backImage: data.idBack }),
+        body: formData,
       });
 
       let dataRes: any = null;

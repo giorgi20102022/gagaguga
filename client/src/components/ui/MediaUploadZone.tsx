@@ -242,27 +242,34 @@ function MediaUploadZoneInner({
 
   const handleFileInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
   const input = e.target;
+  // Copy the file reference immediately — iOS Safari may invalidate the FileList
+  // once the input value is reset or the event handler returns.
+  let file: File | null = null;
   try {
-    const file = input?.files?.[0];
-    if (file) {
-      try {
-        handleFile(file);
-      } catch (err) {
-        console.error('[MediaUpload] handleFile threw:', err);
-        alert('iOS Upload Error: ' + (err instanceof Error ? err.message : String(err)));
-        onError?.('ფოტოს წაკითხვა ვერ მოხერხდა, სცადეთ თავიდან');
-      }
-    }
+    file = input?.files?.[0] ?? null;
   } catch (err) {
-    console.error('[MediaUpload] handleFileInput error:', err);
+    console.error('[MediaUpload] Failed to read file from input:', err);
+  }
+
+  // Reset the input value immediately so the same file can be re-selected later.
+  // We already have a stable `file` reference, so this is safe.
+  try {
+    if (input) input.value = '';
+  } catch {
+    // ignore — some browsers throw on value reset for file inputs
+  }
+
+  if (!file) return;
+
+  try {
+    handleFile(file);
+  } catch (err) {
+    console.error('[MediaUpload] handleFile threw:', err);
     alert('iOS Upload Error: ' + (err instanceof Error ? err.message : String(err)));
     onError?.('ფოტოს წაკითხვა ვერ მოხერხდა, სცადეთ თავიდან');
-  } finally {
-    if (input) {
-      input.value = '';
-    }
   }
 }, [handleFile, onError]);
+
 
   const cameraOverlay = isCameraOpen ? (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/95 p-4 sm:p-8">
@@ -324,22 +331,23 @@ function MediaUploadZoneInner({
     <>
       {cameraOverlay}
       <div className={cn("relative w-full", className)}>
-      {/* Hidden file inputs */}
+      {/* Hidden file inputs — accept includes HEIC/HEIF for iPhone camera photos */}
       <input
         ref={cameraInputRef}
         id={`${baseInputId}-camera`}
         type="file"
-        accept="image/jpeg,image/png,image/webp"
+        accept="image/*,image/heic,image/heif"
         capture="environment"
         className="hidden"
         onChange={handleFileInput}
         disabled={disabled || isBusy}
       />
+      {/* Gallery input: use id so the <label> below can trigger it — avoids iOS blocking programmatic .click() */}
       <input
         ref={galleryInputRef}
         id={`${baseInputId}-gallery`}
         type="file"
-        accept="image/jpeg,image/png,image/webp"
+        accept="image/*,image/heic,image/heif"
         className="hidden"
         onChange={handleFileInput}
         disabled={disabled || isBusy}
@@ -410,13 +418,16 @@ function MediaUploadZoneInner({
               >
                 <Camera className="w-5 h-5" /> გადაღება
               </button>
-              <button
-                type="button"
-                className="flex-1 bg-background text-foreground border-2 border-border hover:bg-muted py-2.5 px-4 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2 min-w-[120px]"
-                onClick={() => galleryInputRef.current?.click()}
+              {/* Use a <label> pointing to the hidden input — the only 100% reliable way to open the file picker on iOS Safari */}
+              <label
+                htmlFor={`${baseInputId}-gallery`}
+                className={cn(
+                  "flex-1 bg-background text-foreground border-2 border-border hover:bg-muted py-2.5 px-4 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2 min-w-[120px] cursor-pointer select-none",
+                  (disabled || isBusy) && "opacity-50 pointer-events-none"
+                )}
               >
                 <UploadCloud className="w-5 h-5" /> ატვირთვა
-              </button>
+              </label>
             </div>
           </div>
         )}

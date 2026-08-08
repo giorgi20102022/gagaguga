@@ -495,47 +495,41 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
     res.status(200).json(req.user);
   });
 
-  app.post("/api/vision/extract-id", async (req: Request, res: Response) => {
-    console.log("Extraction started...");
+  // Updated to handle multipart FormData (frontImage, backImage) from iOS Safari
+  app.post("/api/vision/extract-id", upload.fields([{ name: "frontImage", maxCount: 1 }, { name: "backImage", maxCount: 1 }]), async (req: Request, res: Response) => {
+    console.log("Extraction started (multipart)...");
 
     try {
-      const input = z
-        .object({
-          frontImage: z.string().optional(),
-          backImage: z.string().optional(),
-          idFront: z.string().optional(),
-          idBack: z.string().optional(),
-        })
-        .parse(req.body);
+      // Multer stores files in req.files as an object of arrays. Use a safe any cast to avoid TypeScript errors.
+      const files = (req as any).files as { [fieldname: string]: any[] };
+      const frontFile = files["frontImage"]?.[0];
+      const backFile = files["backImage"]?.[0];
 
-      const frontImage = input.frontImage ?? input.idFront;
-      const backImage = input.backImage ?? input.idBack;
-
-      if (!frontImage || !backImage) {
-        return res.status(400).json({
-          message: "Both frontImage and backImage (or idFront/idBack) are required",
-        });
+      if (!frontFile || !backFile) {
+        return res.status(400).json({ message: "Both frontImage and backImage files are required" });
       }
 
-      const n8nUrl =
-        "https://n8n.srv1020074.hstgr.cloud/webhook/process-id-card";
+      // Convert buffers to base64 strings for downstream processing (same as before)
+      const frontBase64 = frontFile.buffer.toString("base64");
+      const backBase64 = backFile.buffer.toString("base64");
+
+      // Preserve previous behavior that also allowed legacy JSON fields
+      const input = {
+        frontImage: `data:${frontFile.mimetype};base64,${frontBase64}`,
+        backImage: `data:${backFile.mimetype};base64,${backBase64}`,
+      };
+
+      // The rest of the logic (n8n forwarding) stays unchanged – use input.frontImage / input.backImage
+      const frontImage = input.frontImage;
+      const backImage = input.backImage;
+
+      const n8nUrl = "https://n8n.srv1020074.hstgr.cloud/webhook/process-id-card";
 
       const formData = new FormData();
 
-      const frontBase64 = frontImage.includes(',') ? frontImage.split(',')[1] : frontImage;
-      const backBase64 = backImage.includes(',') ? backImage.split(',')[1] : backImage;
-
-      const frontBuffer = Buffer.from(frontBase64, "base64");
-      const backBuffer = Buffer.from(backBase64, "base64");
-
-      formData.append('data', frontBuffer, {
-        filename: 'front.jpg',
-        contentType: 'image/jpeg',
-      });
-      formData.append('data', backBuffer, {
-        filename: 'back.jpg',
-        contentType: 'image/jpeg',
-      });
+      // n8n expects multipart fields named 'data' for each image
+      formData.append('data', Buffer.from(frontBase64, "base64"), { filename: 'front.jpg', contentType: frontFile.mimetype });
+      formData.append('data', Buffer.from(backBase64, "base64"), { filename: 'back.jpg', contentType: backFile.mimetype });
 
       console.log("[ID Extraction] Sending to n8n via axios...", n8nUrl);
 
