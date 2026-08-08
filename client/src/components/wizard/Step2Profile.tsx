@@ -123,6 +123,32 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
   const [pensionerVerifyError, setPensionerVerifyError] = useState<string | null>(null);
   const [pendingPensionerFile, setPendingPensionerFile] = useState<File | null>(null);
 
+  // Helper to compress image Blob to max 1200px dimension and 0.7 JPEG quality
+  const compressBlob = async (blob: Blob): Promise<Blob> => {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const maxDim = 1200;
+        const ratio = Math.min(1, maxDim / Math.max(img.naturalWidth, img.naturalHeight));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(img.naturalWidth * ratio);
+        canvas.height = Math.round(img.naturalHeight * ratio);
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(blob);
+          return;
+        }
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob((compressed) => {
+          if (compressed) resolve(compressed);
+          else resolve(blob);
+        }, 'image/jpeg', 0.7);
+      };
+      img.onerror = (err) => reject(err);
+      img.src = URL.createObjectURL(blob);
+    });
+  };
+
   const [isSocialVerified, setIsSocialVerified] = useState(() => !!data.socialVerified);
   const [isVerifyingSocial, setIsVerifyingSocial] = useState(false);
   const [socialVerifyError, setSocialVerifyError] = useState<string | null>(null);
@@ -178,7 +204,9 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
     setIsPensionerVerified(false);
 
     try {
-      const base64 = await fileToBase64(pendingPensionerFile);
+      // Compress the image before converting to base64 to avoid iOS memory crashes
+      const compressedBlob = await compressBlob(pendingPensionerFile!);
+      const base64 = await fileToBase64(new File([compressedBlob], "upload.jpg", { type: compressedBlob.type }));
 
       const res = await axios.post("/api/vision/verify-pensioner", {
         image: base64,
@@ -195,7 +223,7 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
       // Safety: if the response is empty or not an object, treat as failure
       if (!verified || typeof verified !== "object") {
         setIsPensionerVerified(false);
-        setPensionerVerifyError("პასუხი ცარიელია ან არასწორი ფორმატით მოვიდა");
+        setPensionerVerifyError("ಪასუხಿ ცარიელია ან არასწორი ფორმატით მოვიდა");
         return;
       }
 
@@ -231,6 +259,9 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
         updateData({ pensioner: true });
       }
     } catch (err: unknown) {
+      // Alert the user of client‑side crash before request is sent
+      alert("PENSIONER UPLOAD ERROR: " + ((err as any)?.message || JSON.stringify(err)));
+      console.error("Client side failure (pensioner):", err);
       const errData = (err as any)?.response?.data;
       const georgianMsg = extractVisionApiError(errData);
       const msg = georgianMsg
@@ -241,6 +272,8 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
       setPensionerVerifyError(msg);
     } finally {
       setIsVerifyingPensioner(false);
+      // Reset pending file to allow immediate retry without page refresh
+      setPendingPensionerFile(null);
     }
   };
 
@@ -252,8 +285,10 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
     setIsSocialVerified(false);
 
     try {
+      // Compress the image before sending to avoid iOS memory crashes
+      const compressedBlob = await compressBlob(pendingSocialFile);
       const formData = new FormData();
-      formData.append("image", pendingSocialFile);
+        formData.append("image", new File([compressedBlob], "upload.jpg", { type: compressedBlob.type }));
       if (data.idNumber) {
         formData.append("personalId", data.idNumber);
         formData.append("idNumber", data.idNumber);
@@ -297,8 +332,6 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
         return;
       }
 
-
-
       const extracted = unwrapVerificationPayload(verified);
 
       if (!extracted) {
@@ -338,17 +371,22 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
       setIsSocialVerified(true);
       setSocialVerifyError(null);
     } catch (err: unknown) {
+      // Alert the user of client‑side crash before request is sent
+      alert("SOCIAL UPLOAD ERROR: " + ((err as any)?.message || JSON.stringify(err)));
+      console.error("Client side failure (social):", err);
       const errData = (err as any)?.response?.data;
       const genericError = getErrorMessage(errData);
       const georgianMsg = genericError ?? extractVisionApiError(errData);
       const msg = georgianMsg
         ?? (typeof errData?.message === "string" ? errData.message : null)
-        ?? ((err as any)?.code === "ECONNABORTED" ? "ვერიფიკაციის მოთხოვნის დრო გასულა" : null)
+        ?? ((err as any)?.code === "ECONNABORTED" ? "ვერიფიკაციის მოთხოვნას დრო გაუვიდა" : null)
         ?? "დადასტურება ვერ მოხერხდა";
       setIsSocialVerified(false);
       setSocialVerifyError(msg);
     } finally {
       setIsVerifyingSocial(false);
+      // Reset pending file to allow immediate retry without page refresh
+      setPendingSocialFile(null);
     }
   };
 
