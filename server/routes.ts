@@ -2086,9 +2086,9 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
 
       const input = z
         .object({
-          name: z.string().min(1).optional(),
-          description: z.string().min(1).optional(),
-          category: z.string().min(1).optional(),
+          name: z.string().optional(),
+          description: z.string().optional().nullable(),
+          category: z.string().optional().nullable(),
           imageUrl: z.string().optional().nullable(),
           stock: z.coerce.number().int().optional(),
           price: z.coerce.number().int().optional(),

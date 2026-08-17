@@ -257,6 +257,9 @@ export default function AdminDashboard() {
     try {
       const priceCents = Math.round(parseFloat(editForm.price || "0") * 100);
       const stock = parseInt(editForm.stock || "0");
+      const deliveryFeeVal = isIronPlus && editForm.deliveryFee !== "" && editForm.deliveryFee !== null && !isNaN(parseFloat(editForm.deliveryFee))
+        ? Math.round(parseFloat(editForm.deliveryFee) * 100)
+        : null;
 
       const res = await fetch(`/api/admin/products/${editingProduct.id}?dealer=${dealer}`, {
         method: "PATCH",
@@ -265,13 +268,13 @@ export default function AdminDashboard() {
           Authorization: `Bearer ${localStorage.getItem("admin_token")}`,
         },
         body: JSON.stringify({
-          name: editForm.name,
-          description: editForm.description,
-          category: editForm.category,
+          name: editForm.name || editingProduct.name,
+          description: editForm.description || "",
+          category: editForm.category || "",
           imageUrl: editForm.imageUrl || null,
           stock,
           price: priceCents,
-          deliveryFee: isIronPlus && editForm.deliveryFee !== "" ? Math.round(parseFloat(editForm.deliveryFee || "0") * 100) : null,
+          deliveryFee: deliveryFeeVal,
         }),
       });
       if (!res.ok) {
