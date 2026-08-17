@@ -129,8 +129,8 @@ export default function DealerDashboard() {
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    localStorage.clear();
-    sessionStorage.clear();
+    try { localStorage.clear(); } catch { /* ignore */ }
+    try { sessionStorage.clear(); } catch { /* ignore */ }
     setFormData({});
     setStep(1);
     setErrorMessage('');
@@ -235,28 +235,16 @@ export default function DealerDashboard() {
     try {
       await registerDealerPersonalIdOnPortal(formData);
 
-      // Helper to convert file to base64
-      const fileToBase64 = (file: File | Blob): Promise<string> => {
-        return new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(reader.result as string);
-          reader.onerror = (err) => reject(err);
-          reader.readAsDataURL(file);
-        });
-      };
-
       // Get signature as base64 string
       const signatureText = makeSignatureText(formData.firstName, formData.lastName);
       let signatureBase64 = formData.signature || "";
 
-      const signatureFile = (formData as any).signatureFile;
-
-      if (signatureFile) {
-        signatureBase64 = await fileToBase64(signatureFile);
-      } else if ((formData as any).signatureFile) {
-        signatureBase64 = await fileToBase64((formData as any).signatureFile);
-      } else if (!signatureBase64 && signatureText) {
-        signatureBase64 = await renderSignaturePngDataUrl(signatureText);
+      if (!signatureBase64 && signatureText) {
+        try {
+          signatureBase64 = await renderSignaturePngDataUrl(signatureText);
+        } catch (sigErr) {
+          console.warn("[Submit] Signature generation fallback:", sigErr);
+        }
       }
 
       const itemPrice = Number(formData.price || 0);
@@ -334,6 +322,15 @@ export default function DealerDashboard() {
         receiptVerificationMessage: formData.receiptVerificationMessage,
       };
 
+      // Payload size check & logging
+      try {
+        const payloadJson = JSON.stringify(payload);
+        const sizeKb = Math.round(new Blob([payloadJson]).size / 1024);
+        console.log(`[Submit Payload Size]: ${sizeKb} KB`);
+      } catch {
+        // ignore
+      }
+
       console.log("[Submit] Supplier fields →", {
         isGorgiaUser,
         "formData.supplierName": formData.supplierName,
@@ -345,14 +342,10 @@ export default function DealerDashboard() {
       const response = await axios.post("/api/workspace/submit", payload, {
         headers: {
           "Content-Type": "application/json",
+          "Accept": "application/json",
         },
+        timeout: 120000,
         validateStatus: (status) => status >= 200 && status < 300,
-        onDownloadProgress: (progressEvent) => {
-          const text = (progressEvent.event?.currentTarget as XMLHttpRequest)?.responseText;
-          if (text && text.includes('"queued"')) {
-            setLoadingMessage("თქვენი მოთხოვნა რიგშია. გთხოვთ, არ დახუროთ გვერდი, მიმდინარეობს დამუშავება...");
-          }
-        }
       });
 
       if (response.status === 202 || response.data?.status === "queued") {
@@ -371,10 +364,6 @@ export default function DealerDashboard() {
             }
           }
         } else {
-          // If backend just returned 202 but didn't provide a way to poll, we assume 
-          // they might stream the response over the same connection, which would have resolved with 200.
-          // Since it resolved with 202 and we have no tracking ID, we exit to keep UI loading
-          // so the user knows it's queued.
           return;
         }
       }
@@ -384,22 +373,35 @@ export default function DealerDashboard() {
         description: "მომხმარებლის განაცხადი წარმატებით დამუშავდა.",
       });
       setSubmissionStatus('success');
-      localStorage.clear();
-      sessionStorage.clear();
+      try { localStorage.clear(); } catch { /* ignore Safari Private Browsing restriction */ }
+      try { sessionStorage.clear(); } catch { /* ignore Safari Private Browsing restriction */ }
       await clearWizardState(WIZARD_STORAGE_KEY);
       setFormData({});
       setStep(1);
       setErrorMessage('');
       setIsStatusModalOpen(true);
-    } catch (error) {
-      // Extract detailed error message from n8n response if available
+    } catch (error: any) {
+      console.error("[Submit] Native Error Structure:", {
+        name: error?.name,
+        message: error?.message,
+        code: error?.code,
+        stack: error?.stack,
+        response: error?.response?.data,
+        status: error?.response?.status,
+      });
+
+      // Extract detailed error message
       let detailedMsg = "განაცხადის გაგზავნა ვერ მოხერხდა";
-      if (axios.isAxiosError(error) && error.response && typeof error.response.data === "object") {
-        // @ts-ignore - dynamic shape
-        detailedMsg = error.response.data.message || detailedMsg;
-      } else if ((error as Error).message) {
-        detailedMsg = (error as Error).message;
+      if (error?.name === "AbortError" || error?.code === "ECONNABORTED") {
+        detailedMsg = "მოთხოვნის დრო ამოიწურა (Timeout). შეამოწმეთ ინტერნეტის კავშირი.";
+      } else if (error?.name === "TypeError" && String(error?.message).includes("fetch")) {
+        detailedMsg = `ქსელის შეცდომა (Network/CORS): ${error.message}`;
+      } else if (axios.isAxiosError(error) && error.response && typeof error.response.data === "object") {
+        detailedMsg = (error.response.data as any).message || (error.response.data as any).error || detailedMsg;
+      } else if (error?.message) {
+        detailedMsg = error.message;
       }
+
       setErrorMessage(detailedMsg);
       toast({
         title: detailedMsg === "კოდი ვერ დაემატა" ? "კოდი ვერ დაემატა" : "გაგზავნის შეცდომა",
@@ -414,8 +416,8 @@ export default function DealerDashboard() {
   };
 
   const cancelSale = async () => {
-    localStorage.clear();
-    sessionStorage.clear();
+    try { localStorage.clear(); } catch { /* ignore */ }
+    try { sessionStorage.clear(); } catch { /* ignore */ }
     await clearWizardState(WIZARD_STORAGE_KEY);
     setFormData({});
     setStep(1);

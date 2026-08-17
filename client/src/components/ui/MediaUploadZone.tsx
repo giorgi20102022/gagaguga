@@ -200,7 +200,7 @@ function MediaUploadZoneInner({
       let height = video.videoHeight || 720;
       if (width === 0 || height === 0) return;
 
-      const maxDim = 1600;
+      const maxDim = 1024;
       if (width > maxDim || height > maxDim) {
         const scale = Math.min(maxDim / width, maxDim / height);
         width = Math.round(width * scale);
@@ -231,7 +231,7 @@ function MediaUploadZoneInner({
           cleanUpStream();
           setIsCameraOpen(false);
         }
-      }, "image/jpeg", 0.75);
+      }, "image/jpeg", 0.70);
     } catch (err) {
       console.error("Error in capturePhoto:", err);
       onError?.("ფოტოს გადაღება ვერ მოხერხდა, სცადეთ თავიდან");

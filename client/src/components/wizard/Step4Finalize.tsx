@@ -374,41 +374,15 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
         return;
       }
 
-      setIsCompilingSignature(true);
-      let signatureFile: File | undefined = undefined;
-      
-      const canvas = signatureCanvasRef.current;
-      if (canvas) {
-        // Prevent infinite hang on iOS Safari with a timeout
-        const blob = await new Promise<Blob | null>((resolve) => {
-          let resolved = false;
-          const timeout = setTimeout(() => {
-            if (!resolved) {
-              resolved = true;
-              console.warn("canvas.toBlob timed out");
-              resolve(null);
-            }
-          }, 3000);
-          
-          canvas.toBlob((b) => {
-            if (resolved) return;
-            resolved = true;
-            clearTimeout(timeout);
-            resolve(b);
-          }, 'image/png');
-        });
-        
-        if (blob) {
-          signatureFile = new File([blob], 'digital-signature.png', { type: 'image/png' });
-          updateData({ signatureFile } as any);
-        }
-      }
-      
-      setIsCompilingSignature(false);
-      onSubmit(signatureFile);
+      // Digital signature is already saved in data.signature via handleSignatureGenerate.
+      // Dispatch onSubmit directly without heavy main-thread blocking operations.
+      onSubmit();
     } catch (err: any) {
-      setIsCompilingSignature(false);
-      console.error("UI Submit Error:", err);
+      console.error("[Step4Finalize] Submit trigger error:", {
+        name: err?.name,
+        message: err?.message,
+        stack: err?.stack,
+      });
       const msg = err?.message || String(err);
       if (/iPad|iPhone|iPod/.test(navigator.userAgent)) {
         alert("UI შეცდომა: " + msg);

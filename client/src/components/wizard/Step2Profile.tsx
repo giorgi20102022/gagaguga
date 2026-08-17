@@ -128,7 +128,7 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
     return new Promise((resolve, reject) => {
       const img = new Image();
       img.onload = () => {
-        const maxDim = 1200;
+        const maxDim = 1024;
         const ratio = Math.min(1, maxDim / Math.max(img.naturalWidth, img.naturalHeight));
         const canvas = document.createElement('canvas');
         canvas.width = Math.round(img.naturalWidth * ratio);
@@ -142,7 +142,7 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
         canvas.toBlob((compressed) => {
           if (compressed) resolve(compressed);
           else resolve(blob);
-        }, 'image/jpeg', 0.7);
+        }, 'image/jpeg', 0.70);
       };
       img.onerror = (err) => reject(err);
       img.src = URL.createObjectURL(blob);

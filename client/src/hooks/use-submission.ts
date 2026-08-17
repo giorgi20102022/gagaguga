@@ -256,6 +256,15 @@ export function useSubmission() {
         receiptVerificationMessage: data.receiptVerificationMessage,
       };
 
+      // Payload size check & logging
+      try {
+        const payloadJson = JSON.stringify(payload);
+        const sizeKb = Math.round(new Blob([payloadJson]).size / 1024);
+        console.log(`[useSubmission Payload Size]: ${sizeKb} KB`);
+      } catch {
+        // ignore
+      }
+
       // Debug logging for iOS issues
       console.log("[useSubmission] dealerKey:", dealerKey);
       console.log("[useSubmission] payload being sent:", payload);
@@ -265,12 +274,27 @@ export function useSubmission() {
         res = await axios.post("/api/submission/submit", payload, {
           headers: {
             "Content-Type": "application/json",
+            "Accept": "application/json",
           },
+          timeout: 120000,
         });
-      } catch (err) {
-        console.error("[useSubmission] Submission error:", err);
-        // Preserve original error handling by rethrowing
-        throw err;
+      } catch (err: any) {
+        console.error("[useSubmission] Native Submission Error:", {
+          name: err?.name,
+          message: err?.message,
+          code: err?.code,
+          stack: err?.stack,
+          response: err?.response?.data,
+        });
+        let detailedMsg = err?.message || "განაცხადის გაგზავნა ვერ მოხერხდა";
+        if (err?.name === "AbortError" || err?.code === "ECONNABORTED") {
+          detailedMsg = "მოთხოვნის დრო ამოიწურა (Timeout). შეამოწმეთ ინტერნეტის კავშირი.";
+        } else if (err?.name === "TypeError" && String(err?.message).includes("fetch")) {
+          detailedMsg = `ქსელის შეცდომა (Network/CORS): ${err.message}`;
+        } else if (axios.isAxiosError(err) && err.response && typeof err.response.data === "object") {
+          detailedMsg = (err.response.data as any).message || (err.response.data as any).error || detailedMsg;
+        }
+        throw new Error(detailedMsg);
       }
       return res.data;
     },

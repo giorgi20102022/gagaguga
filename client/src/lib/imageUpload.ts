@@ -1,10 +1,10 @@
 /** Max long-edge for the instant blob preview shown in the UI */
-const PREVIEW_MAX_DIMENSION = 1280;
-const PREVIEW_JPEG_QUALITY = 0.82;
+const PREVIEW_MAX_DIMENSION = 1024;
+const PREVIEW_JPEG_QUALITY = 0.70;
 
 /** Hard limits for base64 storage — enforced on EVERY image upload (safely capped for mobile Chrome/WebKit) */
-const STORAGE_MAX_DIMENSION = 1600;
-const STORAGE_JPEG_QUALITY = 0.75;
+const STORAGE_MAX_DIMENSION = 1024;
+const STORAGE_JPEG_QUALITY = 0.70;
 
 export function getImagePreviewSrc(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;

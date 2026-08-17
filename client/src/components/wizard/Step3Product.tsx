@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 import { Receipt, Percent, Loader2, CheckCircle2, AlertCircle, Search } from "lucide-react";
 import axios from "axios";
+import { sendN8NRequest } from "@/lib/api";
 interface Props {
   data: Partial<SubmissionInput>;
   updateData: (data: Partial<SubmissionInput>) => void;
@@ -102,17 +103,16 @@ export function Step3ProductInner({ data, updateData, onNext, onBack, dealerKey:
     setOvenVerificationResult(null);
 
     try {
-      const res = await axios.post("/api/check-stove-code", {
+      const result = await sendN8NRequest({
         action: "verify",
         code: code,
         dealer_name: dealerNameToSend,
         branch_name: dealerNameToSend,
       });
 
-      const result = res.data;
       if (result?.status === "success") {
         const message = result.message || "კოდი ვალიდურია";
-        const parsedCodeRow = result.code_row != null && result.code_row !== ""
+        const parsedCodeRow = result.code_row != null && String(result.code_row) !== ""
           ? Number(result.code_row)
           : undefined;
         const codeRow = parsedCodeRow != null && !Number.isNaN(parsedCodeRow) ? parsedCodeRow : undefined;
@@ -120,12 +120,13 @@ export function Step3ProductInner({ data, updateData, onNext, onBack, dealerKey:
           success: true,
           message,
         });
-        if (result.product_name) {
-          setVerifiedProductName(result.product_name);
+        const prodName = result.product_name;
+        if (prodName) {
+          setVerifiedProductName(prodName);
           const matched = products.find((p) =>
-            p.name === result.product_name ||
-            p.name.includes(result.product_name) ||
-            result.product_name.includes(p.name)
+            p.name === prodName ||
+            p.name.includes(prodName) ||
+            prodName.includes(p.name)
           );
           if (matched) {
             updateData({ 
@@ -133,14 +134,14 @@ export function Step3ProductInner({ data, updateData, onNext, onBack, dealerKey:
               deliveryFee: 0,
               ovenVerified: true,
               ovenVerificationMessage: message,
-              verifiedProductName: result.product_name,
+              verifiedProductName: prodName,
               ovenCodeRow: codeRow,
             });
           } else {
             updateData({
               ovenVerified: true,
               ovenVerificationMessage: message,
-              verifiedProductName: result.product_name,
+              verifiedProductName: prodName,
               ovenCodeRow: codeRow,
             });
           }
@@ -173,17 +174,24 @@ export function Step3ProductInner({ data, updateData, onNext, onBack, dealerKey:
           variant: "destructive",
         });
       }
-    } catch (err) {
-      console.error("[Oven Verification] Error:", err);
-      let rawError = "შემოწმება ვერ მოხერხდა";
-      
-      if (axios.isAxiosError(err)) {
+    } catch (err: any) {
+      console.error("[Oven Verification] Native Error:", {
+        name: err?.name,
+        message: err?.message,
+        code: err?.code,
+        stack: err?.stack,
+        response: err?.response?.data,
+      });
+      let rawError = err?.message || "შემოწმება ვერ მოხერხდა";
+      if (err?.name === "AbortError") {
+        rawError = "მოთხოვნის დრო ამოიწურა (Timeout). გთხოვთ სცადოთ თავიდან.";
+      } else if (err?.name === "TypeError" && String(err?.message).includes("fetch")) {
+        rawError = `ქსელის შეცდომა (Network/CORS): ${err.message}`;
+      } else if (axios.isAxiosError(err)) {
         const serverData = err.response?.data;
         rawError = typeof serverData === 'string' 
           ? serverData 
           : (serverData?.message || serverData?.error || err.message);
-      } else {
-        rawError = (err as Error).message;
       }
 
       setOvenVerificationResult({
