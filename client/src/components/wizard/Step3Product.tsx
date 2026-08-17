@@ -474,17 +474,27 @@ export function Step3ProductInner({ data, updateData, onNext, onBack, dealerKey:
                 const adminPct = model.discountPercentage;
                 cardRate = (adminPct && adminPct > 0) ? adminPct / 100 : 0.75;
               }
-              let cardSubsidy = basePrice * cardRate;
-              const isCapped = cardSubsidy > MAX_SUBSIDY_GEL;
-              if (isCapped) {
-                cardSubsidy = MAX_SUBSIDY_GEL;
-                cardRate = basePrice > 0 ? cardSubsidy / basePrice : 0;
-              }
-              const displayPrice = Math.max(0, basePrice - cardSubsidy);
-              const hasDiscount = cardRate > 0;
 
+              const isB1 = isIronPlusDealer && model.name.includes("B1-MZ-18");
               const deliveryFeeForModel = isIronPlusDealer && model.deliveryFee ? model.deliveryFee / 100 : 0;
               const isDeliverySelected = isSelected && deliveryFeeForModel > 0 && Number(data.deliveryFee ?? 0) === deliveryFeeForModel;
+
+              let cardSubsidy: number;
+              let displayPrice: number;
+
+              if (isB1) {
+                const baseAmount = basePrice + (isDeliverySelected ? deliveryFeeForModel : 0);
+                const calculatedDiscount = baseAmount * cardRate;
+                cardSubsidy = Math.min(calculatedDiscount, MAX_SUBSIDY_GEL);
+                displayPrice = Math.max(0, baseAmount - cardSubsidy);
+              } else {
+                let rawSubsidy = basePrice * cardRate;
+                cardSubsidy = Math.min(rawSubsidy, MAX_SUBSIDY_GEL);
+                displayPrice = Math.max(0, basePrice - cardSubsidy);
+              }
+
+              const isCapped = cardSubsidy >= MAX_SUBSIDY_GEL;
+              const hasDiscount = cardRate > 0;
 
               return (
                 <div 

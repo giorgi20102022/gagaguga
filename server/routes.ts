@@ -2076,7 +2076,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
     }
   });
 
-  app.patch("/api/admin/products/:id", authenticateAdmin, async (req: Request, res: Response) => {
+  const updateProductHandler = async (req: Request, res: Response) => {
     try {
       const dealerId = await resolveDealerId(req, res);
       if (!dealerId) return;
@@ -2128,7 +2128,12 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
       }
       return res.status(400).json({ message: (err as Error).message });
     }
-  });
+  };
+
+  app.patch("/api/admin/products/:id", authenticateAdmin, updateProductHandler);
+  app.put("/api/admin/products/:id", authenticateAdmin, updateProductHandler);
+  app.put("/api/products/:id", authenticateAdmin, updateProductHandler);
+  app.patch("/api/products/:id", authenticateAdmin, updateProductHandler);
 
   app.patch("/api/admin/products/:id/price", authenticateAdmin, async (req: Request, res: Response) => {
     try {

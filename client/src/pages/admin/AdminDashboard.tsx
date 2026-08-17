@@ -243,6 +243,15 @@ export default function AdminDashboard() {
 
 
 
+  const isIronPlusDealer = (key?: string | null, name?: string | null) => {
+    const k = (key || "").toLowerCase().trim();
+    const n = (name || "").toLowerCase().trim();
+    return k === "iron" || k === "iron_plus" || k === "iron+" || k.includes("iron") || n.includes("iron");
+  };
+
+  const selectedDealerRecord = dealersList.find((d) => d.key === dealer);
+  const isIronPlus = isIronPlusDealer(dealer, selectedDealerRecord?.name);
+
   const handleUpdatePrice = async () => {
     if (!editingProduct) return;
     try {
@@ -262,7 +271,7 @@ export default function AdminDashboard() {
           imageUrl: editForm.imageUrl || null,
           stock,
           price: priceCents,
-          deliveryFee: dealer === "iron" && editForm.deliveryFee !== "" ? Math.round(parseFloat(editForm.deliveryFee || "0") * 100) : null,
+          deliveryFee: isIronPlus && editForm.deliveryFee !== "" ? Math.round(parseFloat(editForm.deliveryFee || "0") * 100) : null,
         }),
       });
       if (!res.ok) {
@@ -771,10 +780,10 @@ export default function AdminDashboard() {
                                     <Input type="number" step="0.01" value={editForm.price} onChange={(e) => { setEditForm({ ...editForm, price: e.target.value }); setNewPrice(e.target.value); }} className="h-11 rounded-xl" />
                                   </div>
 
-                                  {dealer === "iron" && (
+                                  {isIronPlus && (
                                     <div className="space-y-2">
                                       <Label>მიტანის საფასური (₾)</Label>
-                                      <Input type="number" step="0.01" value={editForm.deliveryFee} onChange={(e) => setEditForm({ ...editForm, deliveryFee: e.target.value })} className="h-11 rounded-xl" />
+                                      <Input type="number" step="0.01" value={editForm.deliveryFee} onChange={(e) => setEditForm({ ...editForm, deliveryFee: e.target.value })} placeholder="0.00" className="h-11 rounded-xl" />
                                     </div>
                                   )}
 
