@@ -1110,6 +1110,38 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
   // ── SMS Verification ──
   app.post("/api/verification/send-sms", async (req: Request, res: Response) => {
     const { phone } = req.body;
+
+    // Backend Safety Guard: check if dealer has requireSmsVerification === false
+    let isBypassed = false;
+    try {
+      const token = req.cookies?.auth_token || req.cookies?.dealer_token || req.cookies?.admin_token;
+      if (token) {
+        const decoded = jwt.verify(token, JWT_SECRET) as any;
+        if (decoded?.dealerId) {
+          const dealer = await storage.getDealerById(decoded.dealerId);
+          if (dealer && dealer.requireSmsVerification === false) {
+            isBypassed = true;
+          }
+        }
+      }
+      if (!isBypassed && req.body?.dealerKey) {
+        const dealerId = await storage.getDealerIdByKey(req.body.dealerKey);
+        if (dealerId) {
+          const dealer = await storage.getDealerById(dealerId);
+          if (dealer && dealer.requireSmsVerification === false) {
+            isBypassed = true;
+          }
+        }
+      }
+    } catch {
+      // Ignore token decode errors
+    }
+
+    if (isBypassed) {
+      console.log("[SMS] Bypass active for dealer. Instant return without SMS dispatch.");
+      return res.json({ success: true, bypassed: true, message: "SMS verification bypassed for dealer" });
+    }
+
     if (!phone) return res.status(400).json({ message: "Phone number is required" });
 
     // Format phone: remove all non-digits, then handle 9 digits -> 995 prefix
@@ -1207,6 +1239,25 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
 
   app.post("/api/verification/verify-sms", async (req: Request, res: Response) => {
     const { phone, code } = req.body;
+
+    let isBypassed = false;
+    try {
+      const token = req.cookies?.auth_token || req.cookies?.dealer_token || req.cookies?.admin_token;
+      if (token) {
+        const decoded = jwt.verify(token, JWT_SECRET) as any;
+        if (decoded?.dealerId) {
+          const dealer = await storage.getDealerById(decoded.dealerId);
+          if (dealer && dealer.requireSmsVerification === false) {
+            isBypassed = true;
+          }
+        }
+      }
+    } catch {}
+
+    if (isBypassed) {
+      return res.json({ success: true, bypassed: true });
+    }
+
     if (!phone || !code) return res.status(400).json({ message: "Phone and code are required" });
 
     let formattedPhone = phone.replace(/\D/g, "");

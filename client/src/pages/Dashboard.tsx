@@ -17,10 +17,12 @@ import {
   clearWizardState,
 } from "@/lib/wizardPersistence";
 import { Loader2 } from "lucide-react";
+import { useDealerAuth } from "@/hooks/use-dealer-auth";
 
 const WIZARD_STORAGE_KEY = "dashboard_wizard_state";
 
 export default function Dashboard() {
+  const { dealer } = useDealerAuth();
   const [step, setStep] = useState<number>(1);
   const [formData, setFormData] = useState<Partial<SubmissionInput>>({});
   const [isRehydrating, setIsRehydrating] = useState(true);
@@ -165,7 +167,7 @@ export default function Dashboard() {
                   <Step3Product key="step3" data={formData} updateData={updateData} onNext={nextStep} onBack={prevStep} active={step === 4} />
                 )}
                 {step === 5 && (
-                  <Step4Finalize key="step4" data={formData} updateData={updateData} onSubmit={handleSubmit} onBack={prevStep} isSubmitting={isPending} onCancelSale={cancelSale} active={step === 5} />
+                  <Step4Finalize key="step4" data={formData} updateData={updateData} onSubmit={handleSubmit} onBack={prevStep} isSubmitting={isPending} onCancelSale={cancelSale} active={step === 5} requireSmsVerification={dealer?.requireSmsVerification} />
                 )}
               </AnimatePresence>
             </ErrorBoundary>

@@ -12,6 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import { sendN8NRequest } from "@/lib/api";
 import axios from "axios";
 import { MediaUploadZone } from "@/components/ui/MediaUploadZone";
+import { useDealerAuth } from "@/hooks/use-dealer-auth";
 
 
 
@@ -188,8 +189,16 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
 
   // ─── Derived from formData — survives component re-mounts on back/forward nav ───
   const hasCaptured = !!data.receiptPhoto;
-  const isBypassed = requireSmsVerification === false;
+  const { dealer } = useDealerAuth();
+  const effectiveRequireSms = requireSmsVerification ?? dealer?.requireSmsVerification ?? true;
+  const isBypassed = effectiveRequireSms === false;
   const isSmsVerified = isBypassed || !!data.smsVerified;
+
+  useEffect(() => {
+    if (isBypassed && !data.smsVerified) {
+      updateDataRef.current({ smsVerified: true });
+    }
+  }, [isBypassed, data.smsVerified]);
   const verificationResult: { success: boolean; message: string; amount?: number } | null =
     !isVerifying && data.receiptVerified !== undefined
       ? {
@@ -225,6 +234,10 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
   }, []);
 
   const handleSendSms = async () => {
+    if (isBypassed) {
+      updateData({ smsVerified: true });
+      return;
+    }
     if (!data.phone || isSendingSms) return;
     setIsSendingSms(true);
     setSmsError(null);
