@@ -1871,7 +1871,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
       res.cookie("auth_token", token, securityConfig.cookieOptions);
       res.cookie("dealer_token", token, securityConfig.cookieOptions);
       console.log("[Dealer Login] Success:", { dealerId: dealer.id, dealerKey: dealer.key, email: dealer.email });
-      return res.json({ role: "dealer", dealer: { id: dealer.id, key: dealer.key, name: dealer.name, email: dealer.email, identificationCode: dealer.identificationCode } });
+      return res.json({ role: "dealer", dealer: { id: dealer.id, key: dealer.key, name: dealer.name, email: dealer.email, identificationCode: dealer.identificationCode, requireSmsVerification: dealer.requireSmsVerification !== false } });
     } catch (err) {
       console.error("[Dealer Login] Error:", err);
       return res.status(500).json({ message: "Login failed" });
@@ -1884,7 +1884,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
       if (!dealerId) return res.status(401).json({ message: "Unauthorized" });
       const dealer = await storage.getDealerById(dealerId);
       if (!dealer) return res.status(404).json({ message: "Dealer not found" });
-      return res.json({ id: dealer.id, key: dealer.key, name: dealer.name, email: dealer.email, identificationCode: dealer.identificationCode });
+      return res.json({ id: dealer.id, key: dealer.key, name: dealer.name, email: dealer.email, identificationCode: dealer.identificationCode, requireSmsVerification: dealer.requireSmsVerification !== false });
     } catch {
       return res.status(401).json({ message: "Unauthorized" });
     }
@@ -1909,7 +1909,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
 
   app.post("/api/admin/dealers", authenticateAdmin, async (req: Request, res: Response) => {
     try {
-      const { name, email, password: rawPassword, identificationCode } = req.body;
+      const { name, email, password: rawPassword, identificationCode, requireSmsVerification } = req.body;
       if (!name || !email || !rawPassword || !identificationCode) {
         return res.status(400).json({ message: "Name, identification code, email, and password are required" });
       }
@@ -1930,6 +1930,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
         identificationCode: idCodeStr,
         email,
         password: hashedPassword,
+        requireSmsVerification: requireSmsVerification !== undefined ? Boolean(requireSmsVerification) : true,
       });
 
       // Note: Webhook configuration is hardcoded in DEFAULT_WEBHOOKS constant
@@ -1949,7 +1950,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
   app.patch("/api/admin/dealers/:id", authenticateAdmin, async (req: Request, res: Response) => {
     try {
       const id = Number(req.params.id);
-      const { name, email, password: rawPassword, identificationCode, whatsappNumber, sendToRda } = req.body;
+      const { name, email, password: rawPassword, identificationCode, whatsappNumber, sendToRda, requireSmsVerification } = req.body;
       const update: any = {};
       if (name) update.name = name;
       if (identificationCode !== undefined) {
@@ -1960,6 +1961,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
       if (rawPassword) update.password = bcrypt.hashSync(rawPassword, 10);
       if (whatsappNumber !== undefined) update.whatsappNumber = whatsappNumber;
       if (sendToRda !== undefined) update.sendToRda = sendToRda;
+      if (requireSmsVerification !== undefined) update.requireSmsVerification = Boolean(requireSmsVerification);
 
       const dealer = await storage.updateDealer(id, update);
       const { password: _, ...safe } = dealer;

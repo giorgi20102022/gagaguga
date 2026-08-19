@@ -7,6 +7,7 @@ interface DealerInfo {
   name: string;
   email: string;
   identificationCode?: string;
+  requireSmsVerification?: boolean;
 }
 
 export function useDealerAuth() {

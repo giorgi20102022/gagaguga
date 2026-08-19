@@ -522,7 +522,7 @@ export default function DealerDashboard() {
                   <Step3Product key="step3" data={formData} updateData={updateData} onNext={nextStep} onBack={prevStep} dealerKey={dealer.key} dealerName={dealer.name} active={step === 4} />
                 )}
                 {step === 5 && (
-                  <Step4Finalize key="step4" data={formData} updateData={updateData} onSubmit={handleSubmit} onBack={prevStep} isSubmitting={isSubmitting} onCancelSale={cancelSale} active={step === 5} />
+                  <Step4Finalize key="step4" data={formData} updateData={updateData} onSubmit={handleSubmit} onBack={prevStep} isSubmitting={isSubmitting} onCancelSale={cancelSale} active={step === 5} requireSmsVerification={dealer?.requireSmsVerification} />
                 )}
               </AnimatePresence>
             </ErrorBoundary>

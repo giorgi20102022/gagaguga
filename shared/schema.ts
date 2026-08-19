@@ -16,6 +16,7 @@ export const dealers = pgTable("dealers", {
   email: text("email").unique(),
   whatsappNumber: text("whatsapp_number"),
   sendToRda: boolean("send_to_rda").default(false),
+  requireSmsVerification: boolean("require_sms_verification").default(true),
   password: text("password"),
   createdAt: timestamp("created_at").defaultNow(),
 });

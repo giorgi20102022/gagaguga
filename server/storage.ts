@@ -31,7 +31,7 @@ export interface IStorage {
   getAllDealers(): Promise<Dealer[]>;
   getDealerById(id: number): Promise<Dealer | undefined>;
   getDealerByEmail(email: string): Promise<Dealer | undefined>;
-  createDealer(dealer: { key: string; name: string; identificationCode: string; email: string; password: string }): Promise<Dealer>;
+  createDealer(dealer: { key: string; name: string; identificationCode: string; email: string; password: string; requireSmsVerification?: boolean }): Promise<Dealer>;
   updateDealer(id: number, update: Partial<Dealer>): Promise<Dealer>;
   deleteDealerCascade(id: number): Promise<void>;
 
@@ -100,7 +100,7 @@ export class DatabaseStorage implements IStorage {
     return dealer;
   }
 
-  async createDealer(dealer: { key: string; name: string; identificationCode: string; email: string; password: string }): Promise<Dealer> {
+  async createDealer(dealer: { key: string; name: string; identificationCode: string; email: string; password: string; requireSmsVerification?: boolean }): Promise<Dealer> {
     const [created] = await db.insert(dealers).values(dealer).returning();
     return created;
   }
@@ -250,7 +250,7 @@ class InMemoryStorage implements IStorage {
     return this.dealersByEmail.get(email);
   }
 
-  async createDealer(dealer: { key: string; name: string; identificationCode: string; email: string; password: string }): Promise<Dealer> {
+  async createDealer(dealer: { key: string; name: string; identificationCode: string; email: string; password: string; requireSmsVerification?: boolean }): Promise<Dealer> {
     const record: Dealer = {
       id: this.nextDealerId++,
       key: dealer.key,
@@ -258,6 +258,8 @@ class InMemoryStorage implements IStorage {
       identificationCode: dealer.identificationCode,
       email: dealer.email,
       password: dealer.password,
+      sendToRda: false,
+      requireSmsVerification: dealer.requireSmsVerification ?? true,
       createdAt: new Date(),
     } as unknown as Dealer;
 

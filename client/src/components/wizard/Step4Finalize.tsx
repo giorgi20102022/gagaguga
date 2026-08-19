@@ -165,9 +165,10 @@ interface Props {
   loadingMessage?: string;
   onCancelSale?: () => void;
   active?: boolean;
+  requireSmsVerification?: boolean;
 }
 
-export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmitting, loadingMessage, onCancelSale, active }: Props) {
+export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmitting, loadingMessage, onCancelSale, active, requireSmsVerification }: Props) {
   const { toast } = useToast();
   const [isVerifying, setIsVerifying] = useState(false);
   const [errors, setErrors] = useState<Record<string, boolean>>({});
@@ -187,7 +188,8 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
 
   // ─── Derived from formData — survives component re-mounts on back/forward nav ───
   const hasCaptured = !!data.receiptPhoto;
-  const isSmsVerified = !!data.smsVerified;
+  const isBypassed = requireSmsVerification === false;
+  const isSmsVerified = isBypassed || !!data.smsVerified;
   const verificationResult: { success: boolean; message: string; amount?: number } | null =
     !isVerifying && data.receiptVerified !== undefined
       ? {
@@ -359,7 +361,7 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
       if (!data.addressVillage || data.addressVillage.trim() === "") newErrors.addressVillage = true;
       if (!data.receiptPhoto) newErrors.receiptPhoto = true;
       const phoneRequired = true;
-      const smsRequired = true;
+      const smsRequired = requireSmsVerification !== false;
       if (phoneRequired && !data.phone) newErrors.phone = true;
       else if (smsRequired && data.phone && !isSmsVerified) newErrors.phone = true;
 
@@ -605,15 +607,15 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
 
           <div className="space-y-2" ref={fieldRefs.phone}>
             <Label className={cn("text-sm font-semibold", errors.phone && "text-destructive")}>
-              განაცხადის დადასტურება sms კოდით*
+              {isBypassed ? "საკონტაქტო ტელეფონის ნომერი *" : "განაცხადის დადასტურება sms კოდით *"}
             </Label>
             <div className="flex gap-2">
               <Input
                 placeholder="5-- -- -- --"
                 value={data.phone || ""}
-                disabled={isSmsVerified}
+                disabled={!isBypassed && isSmsVerified}
                 onChange={(e) => {
-                  updateData({ phone: e.target.value, smsVerified: false });
+                  updateData({ phone: e.target.value, smsVerified: isBypassed });
                   setErrors((prev) => ({ ...prev, phone: false }));
                   setIsSmsSent(false);
                   setSmsError(null);
@@ -626,7 +628,7 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
                 )}
               />
 
-              {!isSmsVerified && (
+              {!isBypassed && !isSmsVerified && (
                 <Button
                   type="button"
                   onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleSendSms(); }}
@@ -639,7 +641,7 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
             </div>
 
             <AnimatePresence>
-              {isSmsSent && !isSmsVerified && (
+              {!isBypassed && isSmsSent && !isSmsVerified && (
                 <motion.div
                   initial={{ opacity: 0, height: 0 }}
                   animate={{ opacity: 1, height: "auto" }}
@@ -667,14 +669,19 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
               )}
             </AnimatePresence>
 
-            {isSmsVerified && (
+            {isBypassed ? (
+              <div className="text-sm text-blue-600 flex items-center gap-1.5 font-medium">
+                <CheckCircle2 className="w-4 h-4 text-blue-600" />
+                SMS ვერიფიკაცია გათიშულია დილერისთვის
+              </div>
+            ) : isSmsVerified ? (
               <div className="text-sm text-green-600 flex items-center gap-1.5 font-medium">
                 <CheckCircle2 className="w-4 h-4" />
                 ნომერი დადასტურებულია
               </div>
-            )}
+            ) : null}
 
-            {smsError && (
+            {smsError && !isBypassed && (
               <div className="text-sm text-red-600 flex items-center gap-1.5 font-medium">
                 <AlertCircle className="w-4 h-4" />
                 {smsError}

@@ -50,6 +50,9 @@ export async function ensureDbBasics() {
       IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='dealers' AND column_name='send_to_rda') THEN
         ALTER TABLE dealers ADD COLUMN send_to_rda BOOLEAN DEFAULT false;
       END IF;
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='dealers' AND column_name='require_sms_verification') THEN
+        ALTER TABLE dealers ADD COLUMN require_sms_verification BOOLEAN DEFAULT true;
+      END IF;
       IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='dealers' AND column_name='password') THEN
         ALTER TABLE dealers ADD COLUMN password TEXT;
       END IF;

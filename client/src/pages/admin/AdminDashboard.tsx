@@ -37,6 +37,7 @@ export default function AdminDashboard() {
     email: string | null;
     whatsappNumber?: string | null;
     sendToRda?: boolean | null;
+    requireSmsVerification?: boolean | null;
     createdAt: string | null;
   }
   const [dealersList, setDealersList] = useState<DealerRecord[]>([]);
@@ -47,7 +48,7 @@ export default function AdminDashboard() {
   const [showNewDealerPassword, setShowNewDealerPassword] = useState(false);
 
   const [editingDealer, setEditingDealer] = useState<DealerRecord | null>(null);
-  const [editDealerForm, setEditDealerForm] = useState({ name: "", identificationCode: "", email: "", password: "", whatsappNumber: "", sendToRda: false });
+  const [editDealerForm, setEditDealerForm] = useState({ name: "", identificationCode: "", email: "", password: "", whatsappNumber: "", sendToRda: false, requireSmsVerification: true });
   const [showEditPassword, setShowEditPassword] = useState(false);
 
   // New Product Form State
@@ -139,6 +140,7 @@ export default function AdminDashboard() {
       if (editDealerForm.password) body.password = editDealerForm.password;
       body.whatsappNumber = editDealerForm.whatsappNumber || null;
       body.sendToRda = editDealerForm.sendToRda;
+      body.requireSmsVerification = editDealerForm.requireSmsVerification;
 
       const res = await fetch(`/api/admin/dealers/${editingDealer.id}`, {
         method: "PATCH",
@@ -527,7 +529,7 @@ export default function AdminDashboard() {
                               variant="ghost"
                               onClick={() => {
                                 setEditingDealer(d);
-                                setEditDealerForm({ name: d.name, identificationCode: String(d.identificationCode || ""), email: d.email || "", password: "", whatsappNumber: d.whatsappNumber || "", sendToRda: !!d.sendToRda });
+                                setEditDealerForm({ name: d.name, identificationCode: String(d.identificationCode || ""), email: d.email || "", password: "", whatsappNumber: d.whatsappNumber || "", sendToRda: !!d.sendToRda, requireSmsVerification: d.requireSmsVerification !== false });
                                 setShowEditPassword(false);
                               }}
                               className="h-8 w-8 rounded-lg"
@@ -627,6 +629,13 @@ export default function AdminDashboard() {
                     <Switch
                       checked={editDealerForm.sendToRda}
                       onCheckedChange={(checked) => setEditDealerForm({ ...editDealerForm, sendToRda: checked })}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between p-3 rounded-xl border border-border bg-muted/30">
+                    <Label className="cursor-pointer">SMS კოდით ავტორიზაციის/ვერიფიკაციის გათიშვა</Label>
+                    <Switch
+                      checked={!editDealerForm.requireSmsVerification}
+                      onCheckedChange={(checked) => setEditDealerForm({ ...editDealerForm, requireSmsVerification: !checked })}
                     />
                   </div>
                 </div>
