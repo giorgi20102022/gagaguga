@@ -73,13 +73,15 @@ export async function cancelSubmission(params: { ovenCode?: string; dealerName?:
 async function submitWithFetch(url: string, payload: object): Promise<any> {
   const bodyStr = JSON.stringify(payload);
   const sizeKb = Math.round(new Blob([bodyStr]).size / 1024);
-  console.log(`[useSubmission] Payload size: ${sizeKb} KB — sending via fetch(keepalive)`);
+  console.log(`[useSubmission] Payload size: ${sizeKb} KB — sending via fetch()`);
 
   const controller = new AbortController();
   // 2-minute hard timeout — mirrors server timeout
   const timer = setTimeout(() => controller.abort(), 120_000);
 
   try {
+    // ── DIAGNOSTIC fetch-start ──────────────────────────────────────────────
+    alert("[iOS DEBUG fetch] Calling fetch(" + url + ") body=" + sizeKb + "KB");
     const response = await fetch(url, {
       method: "POST",
       headers: {
@@ -89,13 +91,15 @@ async function submitWithFetch(url: string, payload: object): Promise<any> {
       credentials: "include",
       // NOTE: keepalive is intentionally NOT set here.
       // iOS Safari enforces a hard 64KB body limit for keepalive requests.
-      // Our payload (receiptPhoto + signature) is 200–400KB so keepalive
+      // Our payload (receiptPhoto + signature) is 200-400KB so keepalive
       // would instantly block the request before it leaves the device.
-      // The UI loading state (isSubmitting → button disabled) prevents the
+      // The UI loading state (isSubmitting -> button disabled) prevents the
       // user from navigating away, making keepalive unnecessary.
       body: bodyStr,
       signal: controller.signal,
     });
+    // ── DIAGNOSTIC fetch-done ───────────────────────────────────────────────
+    alert("[iOS DEBUG fetch-done] response.status=" + response.status + " ok=" + response.ok);
 
     clearTimeout(timer);
 
@@ -107,6 +111,7 @@ async function submitWithFetch(url: string, payload: object): Promise<any> {
         : (errData?.message || errData?.error || errData?.field
           ? `${errData.field ? errData.field + ": " : ""}${errData.message || errData.error}`
           : `HTTP ${response.status}`);
+      alert("[iOS DEBUG fetch-error-body] server said: " + msg);
       const e = new Error(msg);
       (e as any).status = response.status;
       throw e;
@@ -115,6 +120,8 @@ async function submitWithFetch(url: string, payload: object): Promise<any> {
     return await response.json();
   } catch (err: any) {
     clearTimeout(timer);
+    // ── DIAGNOSTIC fetch-catch ──────────────────────────────────────────────
+    alert("[iOS DEBUG fetch-catch] name=" + (err?.name || "?") + " msg=" + (err?.message || "?"));
     console.error("[useSubmission] fetch() error:", {
       name: err?.name,
       message: err?.message,
@@ -129,6 +136,9 @@ export function useSubmission() {
 
   return useMutation({
     mutationFn: async (data: SubmissionInput) => {
+      // ── DIAGNOSTIC A: mutationFn entered ──────────────────────────────────
+      alert("[iOS DEBUG A] mutationFn entered. firstName=" + (data.firstName || "?") + " receiptPhoto=" + (data.receiptPhoto ? "YES(" + Math.round((data.receiptPhoto.length)/1024) + "KB)" : "MISSING"));
+
       await registerDealerPersonalIdOnPortal(data);
 
       // Signature must already be pre-generated into data.signature by Step4Finalize
@@ -156,11 +166,18 @@ export function useSubmission() {
           dealerEmail = dealerRes.data.email || "";
           dealerKey = dealerRes.data.key || "";
         }
-      } catch (e) {
+      } catch (e: any) {
+        // ── DIAGNOSTIC B-fail: dealer fetch threw ─────────────────────────
+        alert("[iOS DEBUG B-fail] /api/dealer/me threw: " + (e?.message || String(e)));
         console.warn("Failed to fetch active dealer profile in useSubmission:", e);
       }
 
+      // ── DIAGNOSTIC B: dealer fetch result ────────────────────────────────
+      alert("[iOS DEBUG B] dealer/me done. email=" + (dealerEmail || "EMPTY") + " key=" + (dealerKey || "EMPTY"));
+
       if (!dealerEmail) {
+        // ── DIAGNOSTIC C: auth failure ────────────────────────────────────
+        alert("[iOS DEBUG C] BLOCKED: dealerEmail is empty — auth cookie may be missing on iPhone.");
         toast({
           title: "ავტორიზაციის შეცდომა",
           description: "დილერის ელ-ფოსტა ვერ მოიძებნა. გთხოვთ გაიაროთ ავტორიზაცია თავიდან.",
@@ -256,10 +273,19 @@ export function useSubmission() {
       // Debug logging for iOS issues
       console.log("[useSubmission] dealerKey:", dealerKey);
 
-      // Use iOS-safe fetch() with keepalive instead of axios
+      // ── DIAGNOSTIC D: about to fire the fetch ────────────────────────────
+      const _diagPayloadSize = JSON.stringify(payload).length;
+      alert("[iOS DEBUG D] Step 1 — About to fetch. Payload chars=" + _diagPayloadSize + " (~" + Math.round(_diagPayloadSize/1024) + "KB). dealerEmail=" + dealerEmail);
+
+      // Use iOS-safe fetch() without axios
       try {
-        return await submitWithFetch("/api/submission/submit", payload);
+        const _result = await submitWithFetch("/api/submission/submit", payload);
+        // ── DIAGNOSTIC E: fetch returned ─────────────────────────────────
+        alert("[iOS DEBUG E] Step 2 — submitWithFetch completed OK. Result=" + JSON.stringify(_result).slice(0, 120));
+        return _result;
       } catch (err: any) {
+        // ── DIAGNOSTIC F: fetch/submit failed ────────────────────────────
+        alert("[iOS DEBUG F] Step 3 — submitWithFetch threw:\nname=" + (err?.name || "?") + "\nmessage=" + (err?.message || "?") + "\nstatus=" + ((err as any)?.status || "?"));
         let detailedMsg = err?.message || "განაცხადის გაგზავნა ვერ მოხერხდა";
         if (err?.name === "AbortError") {
           detailedMsg = "მოთხოვნის დრო ამოიწურა (Timeout). შეამოწმეთ ინტერნეტის კავშირი.";

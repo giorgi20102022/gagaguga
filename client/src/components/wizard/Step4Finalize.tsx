@@ -367,8 +367,11 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
     }
   };
 
-  const handleFinish = async () => {
+  const handleFinish = async (e?: React.SyntheticEvent) => {
+    e?.preventDefault();
+    e?.stopPropagation();
     try {
+      alert("[iOS DEBUG UI] handleFinish triggered");
       const newErrors: Record<string, boolean> = {};
       if (!data.cityDistrict) newErrors.cityDistrict = true;
       if (!data.addressVillage || data.addressVillage.trim() === "") newErrors.addressVillage = true;
@@ -379,6 +382,7 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
       else if (smsRequired && data.phone && !isSmsVerified) newErrors.phone = true;
 
       if (Object.keys(newErrors).length > 0) {
+        alert("[iOS DEBUG UI VALIDATION FAIL] Missing fields: " + Object.keys(newErrors).join(", "));
         setErrors(newErrors);
         const firstErrorField = (Object.keys(newErrors) as (keyof typeof fieldRefs)[]).find(
           field => newErrors[field]
@@ -389,8 +393,7 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
         return;
       }
 
-      // Digital signature is already saved in data.signature via handleSignatureGenerate.
-      // Dispatch onSubmit directly without heavy main-thread blocking operations.
+      alert("[iOS DEBUG UI] Validation passed, calling onSubmit()");
       onSubmit();
     } catch (err: any) {
       console.error("[Step4Finalize] Submit trigger error:", {
@@ -399,9 +402,7 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
         stack: err?.stack,
       });
       const msg = err?.message || String(err);
-      if (/iPad|iPhone|iPod/.test(navigator.userAgent)) {
-        alert("UI შეცდომა: " + msg);
-      }
+      alert("UI catch error: " + msg);
     }
   };
 
@@ -729,7 +730,7 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
           <Button type="button" variant="outline" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onBack(); }} disabled={isSubmitting || isCancelling || isCompilingSignature} className="w-full sm:w-auto px-8 h-12 rounded-xl text-base">უკან</Button>
           <Button
             type="button"
-            onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleFinish(); }}
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleFinish(e); }}
             disabled={isSubmitDisabled}
             className="w-full sm:w-auto px-10 h-12 rounded-xl text-base font-bold shadow-lg shadow-primary/25 hover:-translate-y-0.5 transition-all"
           >
