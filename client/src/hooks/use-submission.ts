@@ -55,17 +55,20 @@ export async function cancelSubmission(params: { ovenCode?: string; dealerName?:
  *
  * WHY fetch() instead of axios:
  *   - axios uses XHR internally on iOS WebKit which throws "Network Error"
- *     (NSURLErrorNetworkConnectionLost) when uploading large bodies if the
- *     screen dims or the app briefly backgrounds during upload.
- *   - Native fetch() + keepalive:true tells iOS to complete the upload even
- *     after the page becomes inactive. This is the only reliable method for
- *     large JSON payloads on iPhone Safari.
+ *     (NSURLErrorNetworkConnectionLost) when uploading large bodies.
+ *   - Native fetch() is more reliable on iOS Safari for JSON POST requests.
+ *
+ * WHY keepalive is NOT used:
+ *   - iOS Safari enforces a hard 64KB body size limit on keepalive requests.
+ *   - Our payload (receiptPhoto + signature base64) is 200–400KB, so
+ *     keepalive would cause an instant silent block before the request leaves.
+ *   - Instead, the UI button is disabled (isSubmitting=true) during upload
+ *     which prevents the user from navigating away mid-request.
  *
  * WHY we strip idFront/idBack/passportPhoto:
  *   - These images were already sent to n8n in Step 1 for OCR verification.
- *   - Including them again in the final submission payload inflates the body
- *     to 2–5 MB which reliably triggers iOS NSURLErrorNetworkConnectionLost.
- *   - receiptPhoto and signature are kept because n8n needs them at this stage.
+ *   - Removing them reduces the body from 2–5 MB to ~200–400 KB.
+ *   - receiptPhoto and signature are kept because n8n needs them here.
  */
 async function submitWithFetch(url: string, payload: object): Promise<any> {
   const bodyStr = JSON.stringify(payload);
@@ -84,9 +87,12 @@ async function submitWithFetch(url: string, payload: object): Promise<any> {
         "Accept": "application/json",
       },
       credentials: "include",
-      // keepalive: tells iOS Safari to finish the upload even if the page
-      // is dismissed or the screen dims. Critical for large payloads on iPhone.
-      keepalive: true,
+      // NOTE: keepalive is intentionally NOT set here.
+      // iOS Safari enforces a hard 64KB body limit for keepalive requests.
+      // Our payload (receiptPhoto + signature) is 200–400KB so keepalive
+      // would instantly block the request before it leaves the device.
+      // The UI loading state (isSubmitting → button disabled) prevents the
+      // user from navigating away, making keepalive unnecessary.
       body: bodyStr,
       signal: controller.signal,
     });
