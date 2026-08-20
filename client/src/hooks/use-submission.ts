@@ -70,64 +70,44 @@ export async function cancelSubmission(params: { ovenCode?: string; dealerName?:
  *   - Removing them reduces the body from 2–5 MB to ~200–400 KB.
  *   - receiptPhoto and signature are kept because n8n needs them here.
  */
-async function submitWithFetch(url: string, payload: object): Promise<any> {
+/**
+ * Submission using Axios with absolute URL, credentials, and 40s timeout.
+ */
+async function submitWithAxios(path: string, payload: object): Promise<any> {
+  const endpoint = `${window.location.origin}${path}`;
   const bodyStr = JSON.stringify(payload);
   const sizeKb = Math.round(new Blob([bodyStr]).size / 1024);
-  console.log(`[useSubmission] Payload size: ${sizeKb} KB — sending via fetch()`);
-
-  const controller = new AbortController();
-  // 2-minute hard timeout — mirrors server timeout
-  const timer = setTimeout(() => controller.abort(), 120_000);
+  console.log(`[useSubmission] Payload size: ${sizeKb} KB — sending via axios.post(${endpoint})`);
 
   try {
-    // ── DIAGNOSTIC fetch-start ──────────────────────────────────────────────
-    alert("[iOS DEBUG fetch] Calling fetch(" + url + ") body=" + sizeKb + "KB");
-    const response = await fetch(url, {
-      method: "POST",
+    // ── DIAGNOSTIC axios-start ─────────────────────────────────────────────
+    alert("[iOS DEBUG axios] Calling axios.post(" + endpoint + ") body=" + sizeKb + "KB");
+    const response = await axios.post(endpoint, payload, {
       headers: {
         "Content-Type": "application/json",
         "Accept": "application/json",
       },
-      credentials: "include",
-      // NOTE: keepalive is intentionally NOT set here.
-      // iOS Safari enforces a hard 64KB body limit for keepalive requests.
-      // Our payload (receiptPhoto + signature) is 200-400KB so keepalive
-      // would instantly block the request before it leaves the device.
-      // The UI loading state (isSubmitting -> button disabled) prevents the
-      // user from navigating away, making keepalive unnecessary.
-      body: bodyStr,
-      signal: controller.signal,
+      withCredentials: true,
+      timeout: 40000, // 40 seconds timeout for mobile persistence
     });
-    // ── DIAGNOSTIC fetch-done ───────────────────────────────────────────────
-    alert("[iOS DEBUG fetch-done] response.status=" + response.status + " ok=" + response.ok);
+    // ── DIAGNOSTIC axios-done ──────────────────────────────────────────────
+    alert("[iOS DEBUG axios-done] response.status=" + response.status + " data=" + JSON.stringify(response.data).slice(0, 100));
 
-    clearTimeout(timer);
-
-    if (!response.ok) {
-      let errData: any;
-      try { errData = await response.json(); } catch { errData = await response.text(); }
-      const msg = typeof errData === "string"
-        ? errData
-        : (errData?.message || errData?.error || errData?.field
-          ? `${errData.field ? errData.field + ": " : ""}${errData.message || errData.error}`
-          : `HTTP ${response.status}`);
-      alert("[iOS DEBUG fetch-error-body] server said: " + msg);
-      const e = new Error(msg);
-      (e as any).status = response.status;
-      throw e;
-    }
-
-    return await response.json();
+    return response.data;
   } catch (err: any) {
-    clearTimeout(timer);
-    // ── DIAGNOSTIC fetch-catch ──────────────────────────────────────────────
-    alert("[iOS DEBUG fetch-catch] name=" + (err?.name || "?") + " msg=" + (err?.message || "?"));
-    console.error("[useSubmission] fetch() error:", {
+    // ── DIAGNOSTIC axios-catch ─────────────────────────────────────────────
+    const status = err?.response?.status || err?.status || "?";
+    const serverMsg = err?.response?.data?.message || err?.response?.data?.error || err?.message || String(err);
+    alert("[iOS DEBUG axios-catch] status=" + status + " err=" + serverMsg);
+    console.error("[useSubmission] axios error:", {
       name: err?.name,
       message: err?.message,
-      status: (err as any)?.status,
+      code: err?.code,
+      response: err?.response?.data,
     });
-    throw err;
+    const e = new Error(typeof serverMsg === "string" ? serverMsg : JSON.stringify(serverMsg));
+    (e as any).status = status;
+    throw e;
   }
 }
 
@@ -273,22 +253,21 @@ export function useSubmission() {
       // Debug logging for iOS issues
       console.log("[useSubmission] dealerKey:", dealerKey);
 
-      // ── DIAGNOSTIC D: about to fire the fetch ────────────────────────────
+      // ── DIAGNOSTIC D: about to fire Axios request ─────────────────────────
       const _diagPayloadSize = JSON.stringify(payload).length;
-      alert("[iOS DEBUG D] Step 1 — About to fetch. Payload chars=" + _diagPayloadSize + " (~" + Math.round(_diagPayloadSize/1024) + "KB). dealerEmail=" + dealerEmail);
+      alert("[iOS DEBUG D] Step 1 — About to post via Axios. Payload chars=" + _diagPayloadSize + " (~" + Math.round(_diagPayloadSize/1024) + "KB). dealerEmail=" + dealerEmail);
 
-      // Use iOS-safe fetch() without axios
       try {
-        const _result = await submitWithFetch("/api/submission/submit", payload);
-        // ── DIAGNOSTIC E: fetch returned ─────────────────────────────────
-        alert("[iOS DEBUG E] Step 2 — submitWithFetch completed OK. Result=" + JSON.stringify(_result).slice(0, 120));
+        const _result = await submitWithAxios("/api/submission/submit", payload);
+        // ── DIAGNOSTIC E: Axios returned ─────────────────────────────────
+        alert("[iOS DEBUG E] Step 2 — submitWithAxios completed OK. Result=" + JSON.stringify(_result).slice(0, 120));
         return _result;
       } catch (err: any) {
-        // ── DIAGNOSTIC F: fetch/submit failed ────────────────────────────
-        alert("[iOS DEBUG F] Step 3 — submitWithFetch threw:\nname=" + (err?.name || "?") + "\nmessage=" + (err?.message || "?") + "\nstatus=" + ((err as any)?.status || "?"));
+        // ── DIAGNOSTIC F: Axios threw ────────────────────────────────────
+        alert("[iOS DEBUG F] Step 3 — submitWithAxios threw:\nname=" + (err?.name || "?") + "\nmessage=" + (err?.message || "?") + "\nstatus=" + ((err as any)?.status || "?"));
         let detailedMsg = err?.message || "განაცხადის გაგზავნა ვერ მოხერხდა";
-        if (err?.name === "AbortError") {
-          detailedMsg = "მოთხოვნის დრო ამოიწურა (Timeout). შეამოწმეთ ინტერნეტის კავშირი.";
+        if (err?.code === "ECONNABORTED" || err?.name === "AbortError") {
+          detailedMsg = "მოთხოვნის დრო ამოიწურა (Timeout 40s). შეამოწმეთ ინტერნეტის კავშირი.";
         }
         throw new Error(detailedMsg);
       }
