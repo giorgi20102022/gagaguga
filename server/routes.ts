@@ -1599,10 +1599,13 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
     } catch (err) {
       if (err instanceof z.ZodError) {
         const firstErr = err.errors[0];
+        // Log all field errors so server logs reveal the exact rejection cause (critical for iOS debug)
+        console.error("[Submission] Zod validation failed. All errors:", JSON.stringify(err.errors, null, 2));
         return res.status(400).json({
           message: `${firstErr.path.join(".")}: ${firstErr.message}`,
           field: firstErr.path.join("."),
         });
+
       }
       res.status(500).json({ message: (err as Error).message });
     }

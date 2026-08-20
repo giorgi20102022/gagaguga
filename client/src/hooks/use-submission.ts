@@ -6,79 +6,7 @@ import { registerDealerPersonalIdOnPortal } from "@/lib/dealerPersonalId";
 
 // Duplicate N8N_WEBHOOK_URL removed; using exported constant later
 
-const SIGNATURE_FONT_FAMILY = "DM Ambrosi UNI";
-const SIGNATURE_INK_COLOR = "#0B2E6B";
 
-function makeSignatureText(firstName: string | undefined, lastName: string | undefined): string {
-  const fn = String(firstName ?? "").trim();
-  const ln = String(lastName ?? "").trim();
-  if (!fn && !ln) return "";
-  if (!ln) return fn;
-  if (!fn) return ln;
-  const firstInitial = fn.charAt(0).toUpperCase();
-  return `${firstInitial}. ${ln}`;
-}
-
-async function ensureSignatureFontLoaded(fontSizePx: number): Promise<void> {
-  const anyDoc = document as any;
-  if (!anyDoc?.fonts?.load) return;
-  try {
-    await Promise.race([
-      Promise.all([
-        anyDoc.fonts.load(`normal ${fontSizePx}px "${SIGNATURE_FONT_FAMILY}"`, "abcdefghijklmnopqrstuvwxyz"),
-        anyDoc.fonts.ready,
-      ]),
-      new Promise((resolve) => setTimeout(resolve, 500)),
-    ]);
-  } catch {
-    // ignore font load errors; canvas will fall back to default font
-  }
-}
-
-async function renderSignaturePngDataUrl(text: string): Promise<string> {
-  const fontSizePx = 72;
-  const padding = 24;
-
-  await ensureSignatureFontLoaded(fontSizePx);
-
-  const measureCanvas = document.createElement("canvas");
-  const measureCtx = measureCanvas.getContext("2d");
-  if (!measureCtx) throw new Error("Canvas 2D context not available");
-
-  measureCtx.font = `normal ${fontSizePx}px "${SIGNATURE_FONT_FAMILY}"`;
-  measureCtx.textBaseline = "alphabetic";
-  const metrics = measureCtx.measureText(text);
-
-  const ascent = Number.isFinite(metrics.actualBoundingBoxAscent)
-    ? metrics.actualBoundingBoxAscent
-    : fontSizePx * 0.8;
-  const descent = Number.isFinite(metrics.actualBoundingBoxDescent)
-    ? metrics.actualBoundingBoxDescent
-    : fontSizePx * 0.2;
-  const textWidth = Math.ceil(metrics.width);
-  const textHeight = Math.ceil(ascent + descent);
-
-  const canvasWidth = textWidth + padding * 2;
-  const canvasHeight = textHeight + padding * 2;
-
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, canvasWidth);
-  canvas.height = Math.max(1, canvasHeight);
-
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("Canvas 2D context not available");
-
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.font = `normal ${fontSizePx}px "${SIGNATURE_FONT_FAMILY}"`;
-  ctx.textBaseline = "alphabetic";
-  ctx.fillStyle = SIGNATURE_INK_COLOR;
-
-  const x = padding;
-  const y = padding + ascent;
-  ctx.fillText(text, x, y);
-
-  return canvas.toDataURL("image/png");
-}
 
 function base64ToBlob(base64: string): Blob {
   const parts = base64.split(",");
@@ -122,6 +50,74 @@ export async function cancelSubmission(params: { ovenCode?: string; dealerName?:
   return await submitToN8N(payload);
 }
 
+/**
+ * iOS Safari-safe submission using native fetch() with keepalive:true.
+ *
+ * WHY fetch() instead of axios:
+ *   - axios uses XHR internally on iOS WebKit which throws "Network Error"
+ *     (NSURLErrorNetworkConnectionLost) when uploading large bodies if the
+ *     screen dims or the app briefly backgrounds during upload.
+ *   - Native fetch() + keepalive:true tells iOS to complete the upload even
+ *     after the page becomes inactive. This is the only reliable method for
+ *     large JSON payloads on iPhone Safari.
+ *
+ * WHY we strip idFront/idBack/passportPhoto:
+ *   - These images were already sent to n8n in Step 1 for OCR verification.
+ *   - Including them again in the final submission payload inflates the body
+ *     to 2–5 MB which reliably triggers iOS NSURLErrorNetworkConnectionLost.
+ *   - receiptPhoto and signature are kept because n8n needs them at this stage.
+ */
+async function submitWithFetch(url: string, payload: object): Promise<any> {
+  const bodyStr = JSON.stringify(payload);
+  const sizeKb = Math.round(new Blob([bodyStr]).size / 1024);
+  console.log(`[useSubmission] Payload size: ${sizeKb} KB — sending via fetch(keepalive)`);
+
+  const controller = new AbortController();
+  // 2-minute hard timeout — mirrors server timeout
+  const timer = setTimeout(() => controller.abort(), 120_000);
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+      },
+      credentials: "include",
+      // keepalive: tells iOS Safari to finish the upload even if the page
+      // is dismissed or the screen dims. Critical for large payloads on iPhone.
+      keepalive: true,
+      body: bodyStr,
+      signal: controller.signal,
+    });
+
+    clearTimeout(timer);
+
+    if (!response.ok) {
+      let errData: any;
+      try { errData = await response.json(); } catch { errData = await response.text(); }
+      const msg = typeof errData === "string"
+        ? errData
+        : (errData?.message || errData?.error || errData?.field
+          ? `${errData.field ? errData.field + ": " : ""}${errData.message || errData.error}`
+          : `HTTP ${response.status}`);
+      const e = new Error(msg);
+      (e as any).status = response.status;
+      throw e;
+    }
+
+    return await response.json();
+  } catch (err: any) {
+    clearTimeout(timer);
+    console.error("[useSubmission] fetch() error:", {
+      name: err?.name,
+      message: err?.message,
+      status: (err as any)?.status,
+    });
+    throw err;
+  }
+}
+
 export function useSubmission() {
   const { toast } = useToast();
 
@@ -129,24 +125,15 @@ export function useSubmission() {
     mutationFn: async (data: SubmissionInput) => {
       await registerDealerPersonalIdOnPortal(data);
 
-      // Helper to convert file to base64
-      const fileToBase64 = (file: File | Blob): Promise<string> => {
-        return new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(reader.result as string);
-          reader.onerror = (err) => reject(err);
-          reader.readAsDataURL(file);
-        });
-      };
-
-      // Get signature as base64 string
-      const signatureText = makeSignatureText(data.firstName, data.lastName);
+      // Signature must already be pre-generated into data.signature by Step4Finalize
+      // BEFORE the user taps submit. Running canvas work here violates iOS Safari Rule 2
+      // (heavy main-thread blocking during a Touch event kills the network request on WebKit).
       let signatureBase64 = data.signature || "";
-
-      if ((data as any).signatureFile) {
-        signatureBase64 = await fileToBase64((data as any).signatureFile);
-      } else if (!signatureBase64 && signatureText) {
-        signatureBase64 = await renderSignaturePngDataUrl(signatureText);
+      if (!signatureBase64) {
+        console.warn(
+          "[useSubmission] data.signature is empty — signature was not pre-generated by " +
+          "SignaturePreview before submit. Proceeding without signature image."
+        );
       }
 
       // Get active dealer details dynamically
@@ -190,12 +177,15 @@ export function useSubmission() {
       const isDeliverySelected = deliveryFeeVal > 0;
       const totalPrice = isIronPlus && isDeliverySelected ? itemPrice + deliveryFeeVal : itemPrice;
 
-      // Build JSON payload conforming to submissionSchema
+      // Build JSON payload conforming to submissionSchema.
+      // IMPORTANT — idFront / idBack / passportPhoto are intentionally OMITTED here.
+      // Those images were already processed by n8n during Step 1 OCR verification.
+      // Re-sending them inflates the body to 2–5 MB which reliably causes
+      // NSURLErrorNetworkConnectionLost ("Network Error") on iPhone Safari.
+      // The server/n8n submission webhook does not need them a second time.
       const payload = {
         documentType: data.documentType || "id_card",
-        idFront: data.idFront,
-        idBack: data.idBack,
-        passportPhoto: data.passportPhoto,
+        // ID images stripped — already verified in Step 1, keeping body small for iOS
         firstName: data.firstName || "",
         lastName: data.lastName || "",
         idNumber: data.idNumber || "",
@@ -209,10 +199,10 @@ export function useSubmission() {
         cityDistrict: (data as any).cityDistrict || "",
         addressVillage: (data as any).addressVillage || "",
         sociallyVulnerable: Boolean(data.sociallyVulnerable),
-        socialExtract: data.socialExtract,
+        // socialExtract stripped — already verified in Step 3
         nomadic: Boolean(data.nomadic),
         pensioner: Boolean(data.pensioner),
-        pensionerCertificate: data.pensionerCertificate,
+        // pensionerCertificate stripped — already verified in Step 3
         supplierName: data.supplierName || "",
         supplierId: data.supplierId || "",
         supplierProfile,
@@ -227,8 +217,8 @@ export function useSubmission() {
         user_copayment: finalPayableValue,
         "საბოლოო_გადასახდელი": finalPayableValue,
         installationAddress: data.installationAddress || "",
-        receiptPhoto: data.receiptPhoto || "",
-        signature: signatureBase64,
+        receiptPhoto: data.receiptPhoto || "",   // kept — n8n needs receipt at this stage
+        signature: signatureBase64,              // kept — n8n needs signature at this stage
         digitalConsent: data.digitalConsent !== false,
         dealerEmail,
 
@@ -256,47 +246,21 @@ export function useSubmission() {
         receiptVerificationMessage: data.receiptVerificationMessage,
       };
 
-      // Payload size check & logging
-      try {
-        const payloadJson = JSON.stringify(payload);
-        const sizeKb = Math.round(new Blob([payloadJson]).size / 1024);
-        console.log(`[useSubmission Payload Size]: ${sizeKb} KB`);
-      } catch {
-        // ignore
-      }
 
       // Debug logging for iOS issues
       console.log("[useSubmission] dealerKey:", dealerKey);
-      console.log("[useSubmission] payload being sent:", payload);
 
-      let res;
+      // Use iOS-safe fetch() with keepalive instead of axios
       try {
-        res = await axios.post("/api/submission/submit", payload, {
-          headers: {
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-          },
-          timeout: 120000,
-        });
+        return await submitWithFetch("/api/submission/submit", payload);
       } catch (err: any) {
-        console.error("[useSubmission] Native Submission Error:", {
-          name: err?.name,
-          message: err?.message,
-          code: err?.code,
-          stack: err?.stack,
-          response: err?.response?.data,
-        });
         let detailedMsg = err?.message || "განაცხადის გაგზავნა ვერ მოხერხდა";
-        if (err?.name === "AbortError" || err?.code === "ECONNABORTED") {
+        if (err?.name === "AbortError") {
           detailedMsg = "მოთხოვნის დრო ამოიწურა (Timeout). შეამოწმეთ ინტერნეტის კავშირი.";
-        } else if (err?.name === "TypeError" && String(err?.message).includes("fetch")) {
-          detailedMsg = `ქსელის შეცდომა (Network/CORS): ${err.message}`;
-        } else if (axios.isAxiosError(err) && err.response && typeof err.response.data === "object") {
-          detailedMsg = (err.response.data as any).message || (err.response.data as any).error || detailedMsg;
         }
         throw new Error(detailedMsg);
       }
-      return res.data;
+
     },
     onSuccess: () => {
       toast({
