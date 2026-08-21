@@ -85,8 +85,6 @@ async function submitWithAxios(path: string, payload: any): Promise<any> {
       headers["Content-Type"] = "application/json";
     }
 
-    alert(`[iOS DEBUG fetch] Calling fetch(${endpoint}) body isFormData=${isFormData}`);
-    
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 40000);
 
@@ -110,14 +108,10 @@ async function submitWithAxios(path: string, payload: any): Promise<any> {
       throw err;
     }
 
-    alert("[iOS DEBUG fetch-done] response.status=" + response.status + " data=" + JSON.stringify(data).slice(0, 100));
-
     return data;
   } catch (err: any) {
-    alert(`RAW ERROR CAUSE: Name: ${err?.name}, Msg: ${err?.message}, Type: ${typeof err}`);
     const status = err?.response?.status || err?.status || "?";
     const serverMsg = err?.response?.data?.message || err?.response?.data?.error || err?.message || String(err);
-    alert("[iOS DEBUG fetch-catch] status=" + status + " err=" + serverMsg);
     console.error("[useSubmission] fetch error:", {
       name: err?.name,
       message: err?.message,
@@ -136,9 +130,6 @@ export function useSubmission() {
 
   return useMutation({
     mutationFn: async (data: SubmissionInput) => {
-      // ── DIAGNOSTIC A: mutationFn entered ──────────────────────────────────
-      alert("[iOS DEBUG A] mutationFn entered. firstName=" + (data.firstName || "?") + " receiptPhoto=" + (data.receiptPhoto ? "YES(" + Math.round((data.receiptPhoto.length)/1024) + "KB)" : "MISSING"));
-
       let payload: any;
       let dealerEmail = "";
       let formData: FormData = new FormData();
@@ -174,17 +165,10 @@ export function useSubmission() {
             dealerKey = dealerRes.data.key || "";
           }
         } catch (e: any) {
-          // ── DIAGNOSTIC B-fail: dealer fetch threw ─────────────────────────
-          alert("[iOS DEBUG B-fail] /api/dealer/me threw: " + (e?.message || String(e)));
           console.warn("Failed to fetch active dealer profile in useSubmission:", e);
         }
 
-        // ── DIAGNOSTIC B: dealer fetch result ────────────────────────────────
-        alert("[iOS DEBUG B] dealer/me done. email=" + (dealerEmail || "EMPTY") + " key=" + (dealerKey || "EMPTY"));
-
         if (!dealerEmail) {
-          // ── DIAGNOSTIC C: auth failure ────────────────────────────────────
-          alert("[iOS DEBUG C] BLOCKED: dealerEmail is empty — auth cookie may be missing on iPhone.");
           toast({
             title: "ავტორიზაციის შეცდომა",
             description: "დილერის ელ-ფოსტა ვერ მოიძებნა. გთხოვთ გაიაროთ ავტორიზაცია თავიდან.",
@@ -297,24 +281,15 @@ export function useSubmission() {
         if (blobReceiptPhoto) formData.append("receiptPhoto", blobReceiptPhoto, "receiptPhoto.jpg");
 
         console.log("[useSubmission] dealerKey:", dealerKey);
-
-        alert("[iOS DEBUG D] Step 1 — About to post via Axios with FormData.");
-
-        alert("Payload built successfully, about to send via Axios");
       } catch (prepErr: any) {
-        alert("CRASH DURING PAYLOAD PREP: " + (prepErr?.message || JSON.stringify(prepErr)));
         console.error("Payload Prep Error:", prepErr);
         throw prepErr;
       }
 
       try {
         const _result = await submitWithAxios("/api/submission/submit", formData);
-        // ── DIAGNOSTIC E: Axios returned ─────────────────────────────────
-        alert("[iOS DEBUG E] Step 2 — submitWithAxios completed OK. Result=" + JSON.stringify(_result).slice(0, 120));
         return _result;
       } catch (err: any) {
-        // ── DIAGNOSTIC F: Axios threw ────────────────────────────────────
-        alert("[iOS DEBUG F] Step 3 — submitWithAxios threw:\nname=" + (err?.name || "?") + "\nmessage=" + (err?.message || "?") + "\nstatus=" + ((err as any)?.status || "?"));
         let detailedMsg = err?.message || "განაცხადის გაგზავნა ვერ მოხერხდა";
         if (err?.code === "ECONNABORTED" || err?.name === "AbortError") {
           detailedMsg = "მოთხოვნის დრო ამოიწურა (Timeout 40s). შეამოწმეთ ინტერნეტის კავშირი.";
@@ -330,7 +305,6 @@ export function useSubmission() {
       });
     },
     onError: (error: Error) => {
-      alert("UI CATCH EXPOSED (useSubmission): " + (error?.message || String(error)) + " | TYPE: " + typeof error);
       toast({
         title: "გაგზავნის შეცდომა",
         description: error.message || "განაცხადის გაგზავნა ვერ მოხერხდა",

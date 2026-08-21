@@ -258,7 +258,6 @@ function Step1IdentityInner({ data, updateData, onNext }: Props) {
       applyExtractedIdentity(extracted);
       onNext();
     } catch (e) {
-        alert("FRONTEND CRASH BEFORE FETCH: " + ((e as any)?.message ? (e as any).message : JSON.stringify(e)));
         console.error("Client side failure:", e);
         setError(e instanceof Error ? e.message : "მონაცემების ამოკითხვა ვერ მოხერხდა");
     } finally {

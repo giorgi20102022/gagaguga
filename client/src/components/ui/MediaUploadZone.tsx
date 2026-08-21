@@ -225,7 +225,6 @@ function MediaUploadZoneInner({
           handleFile(file);
         } catch (err) {
           console.error("Error handling camera capture blob:", err);
-          alert('iOS Upload Error: ' + (err instanceof Error ? err.message : String(err)));
           onError?.("ფოტოს გადაღება ვერ მოხერხდა, სცადეთ თავიდან");
         } finally {
           cleanUpStream();
@@ -265,7 +264,6 @@ function MediaUploadZoneInner({
     handleFile(file);
   } catch (err) {
     console.error('[MediaUpload] handleFile threw:', err);
-    alert('iOS Upload Error: ' + (err instanceof Error ? err.message : String(err)));
     onError?.('ფოტოს წაკითხვა ვერ მოხერხდა, სცადეთ თავიდან');
   }
 }, [handleFile, onError]);

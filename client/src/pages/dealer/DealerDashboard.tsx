@@ -428,7 +428,6 @@ export default function DealerDashboard() {
       setErrorMessage('');
       setIsStatusModalOpen(true);
     } catch (error: any) {
-      alert("UI CATCH EXPOSED: " + (error?.message || String(error)) + " | TYPE: " + typeof error + " | AXIOS: " + (axios.isAxiosError(error) ? "YES" : "NO") + " | CODE: " + error?.code);
       console.error("[Submit] Native Error Structure:", {
         name: error?.name,
         message: error?.message,

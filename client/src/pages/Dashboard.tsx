@@ -112,8 +112,7 @@ export default function Dashboard() {
       await clearWizardState(WIZARD_STORAGE_KEY);
       setFormData({});
       setStep(1);
-    } catch (err: any) {
-      alert("UI CATCH EXPOSED (Dashboard): " + (err?.message || String(err)) + " | TYPE: " + typeof err);
+    } catch {
       // Toast already handles error display
     }
   };

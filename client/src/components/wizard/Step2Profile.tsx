@@ -259,8 +259,6 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
         updateData({ pensioner: true });
       }
     } catch (err: unknown) {
-      // Alert the user of client‑side crash before request is sent
-      alert("PENSIONER UPLOAD ERROR: " + ((err as any)?.message || JSON.stringify(err)));
       console.error("Client side failure (pensioner):", err);
       const errData = (err as any)?.response?.data;
       const georgianMsg = extractVisionApiError(errData);
@@ -371,8 +369,6 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
       setIsSocialVerified(true);
       setSocialVerifyError(null);
     } catch (err: unknown) {
-      // Alert the user of client‑side crash before request is sent
-      alert("SOCIAL UPLOAD ERROR: " + ((err as any)?.message || JSON.stringify(err)));
       console.error("Client side failure (social):", err);
       const errData = (err as any)?.response?.data;
       const genericError = getErrorMessage(errData);

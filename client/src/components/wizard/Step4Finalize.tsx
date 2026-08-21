@@ -375,7 +375,6 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
       e.stopPropagation();
     }
     try {
-      alert("[iOS DEBUG UI] handleFinish triggered");
       const newErrors: Record<string, boolean> = {};
       if (!data.cityDistrict) newErrors.cityDistrict = true;
       if (!data.addressVillage || data.addressVillage.trim() === "") newErrors.addressVillage = true;
@@ -386,7 +385,6 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
       else if (smsRequired && data.phone && !isSmsVerified) newErrors.phone = true;
 
       if (Object.keys(newErrors).length > 0) {
-        alert("[iOS DEBUG UI VALIDATION FAIL] Missing fields: " + Object.keys(newErrors).join(", "));
         setErrors(newErrors);
         const firstErrorField = (Object.keys(newErrors) as (keyof typeof fieldRefs)[]).find(
           field => newErrors[field]
@@ -397,16 +395,9 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
         return;
       }
 
-      alert("[iOS DEBUG UI] Validation passed, calling onSubmit()");
       onSubmit();
     } catch (err: any) {
-      console.error("[Step4Finalize] Submit trigger error:", {
-        name: err?.name,
-        message: err?.message,
-        stack: err?.stack,
-      });
-      const msg = err?.message || String(err);
-      alert("UI catch error: " + msg);
+      console.error("[Step4Finalize] Submit trigger error:", err);
     }
   };
 

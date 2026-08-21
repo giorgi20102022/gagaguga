@@ -99,7 +99,6 @@ export function useMediaUpload({ storedValue, onPersist, onFileReady, onError }:
       const msg = "ფოტოს წაკითხვა ვერ მოხერხდა, სცადეთ თავიდან";
       onErrorRef.current?.(msg);
       toast({ title: "შეცდომა", description: msg, variant: "destructive" });
-      alert('iOS Upload Error: ' + (err instanceof Error ? err.message : String(err)));
     } finally {
       setIsPersisting(false);
     }
