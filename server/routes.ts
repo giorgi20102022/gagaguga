@@ -1475,7 +1475,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
   });
 
   // Proxy the submission to n8n webhook (JWT auth — works for both admin and dealer sessions)
-  app.post("/api/submission/submit", upload.none(), async (req: Request, res: Response) => {
+  app.post("/api/submission/submit", upload.any(), async (req: Request, res: Response) => {
     const bearerToken = req.headers.authorization?.split(" ")[1];
     const token =
       (bearerToken && bearerToken !== "null" && bearerToken !== "undefined" ? bearerToken : undefined)
@@ -1495,22 +1495,24 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
     }
 
     try {
-      let bodyData = req.body;
+      let bodyData: Record<string, any> = { ...req.body };
+      const reqFiles = (req as any).files;
+      if (Array.isArray(reqFiles)) {
+        for (const file of reqFiles) {
+          const base64 = file.buffer.toString("base64");
+          bodyData[file.fieldname] = `data:${file.mimetype};base64,${base64}`;
+        }
+      }
       if (req.is('multipart/form-data')) {
-         bodyData = {};
-         for (const [k, v] of Object.entries(req.body)) {
-            if (typeof v === 'string') {
-               if (v === 'true') bodyData[k] = true;
-               else if (v === 'false') bodyData[k] = false;
-               else if (!isNaN(Number(v)) && v.trim() !== '' && ['price', 'subsidyRate', 'subsidyAmount', 'deliveryFee', 'ironPlusFee', 'finalPayable', 'itemPrice', 'totalPrice', 'ovenCodeRow'].includes(k)) {
-                 bodyData[k] = Number(v);
-               } else {
-                 bodyData[k] = v;
-               }
-            } else {
-               bodyData[k] = v;
+        for (const [k, v] of Object.entries(bodyData)) {
+          if (typeof v === 'string') {
+            if (v === 'true') bodyData[k] = true;
+            else if (v === 'false') bodyData[k] = false;
+            else if (!isNaN(Number(v)) && v.trim() !== '' && ['price', 'subsidyRate', 'subsidyAmount', 'deliveryFee', 'ironPlusFee', 'finalPayable', 'itemPrice', 'totalPrice', 'ovenCodeRow'].includes(k)) {
+              bodyData[k] = Number(v);
             }
-         }
+          }
+        }
       }
       const input = submissionSchema.parse(bodyData);
 
@@ -1629,7 +1631,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
   });
 
   // Workspace submission — dealer JWT auth (cookie or Bearer), tags dealer_id
-  app.post("/api/workspace/submit", async (req: Request, res: Response) => {
+  app.post("/api/workspace/submit", upload.any(), async (req: Request, res: Response) => {
     const bearerToken = req.headers.authorization?.split(" ")[1];
     const token =
       (bearerToken && bearerToken !== "null" && bearerToken !== "undefined" ? bearerToken : undefined)
@@ -1649,7 +1651,26 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
     }
 
     try {
-      const input = submissionSchema.parse(req.body);
+      let bodyData: Record<string, any> = { ...req.body };
+      const reqFiles = (req as any).files;
+      if (Array.isArray(reqFiles)) {
+        for (const file of reqFiles) {
+          const base64 = file.buffer.toString("base64");
+          bodyData[file.fieldname] = `data:${file.mimetype};base64,${base64}`;
+        }
+      }
+      if (req.is('multipart/form-data')) {
+        for (const [k, v] of Object.entries(bodyData)) {
+          if (typeof v === 'string') {
+            if (v === 'true') bodyData[k] = true;
+            else if (v === 'false') bodyData[k] = false;
+            else if (!isNaN(Number(v)) && v.trim() !== '' && ['price', 'subsidyRate', 'subsidyAmount', 'deliveryFee', 'ironPlusFee', 'finalPayable', 'itemPrice', 'totalPrice', 'ovenCodeRow'].includes(k)) {
+              bodyData[k] = Number(v);
+            }
+          }
+        }
+      }
+      const input = submissionSchema.parse(bodyData);
 
       // Authoritative dealer name from DB — cannot be tampered with by the frontend
       const dealerRecord = await storage.getDealerById(dealerId);

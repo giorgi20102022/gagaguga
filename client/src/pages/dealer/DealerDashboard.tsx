@@ -215,11 +215,7 @@ export default function DealerDashboard() {
     setStep((s) => Math.max(1, s - 1));
   };
 
-  const handleSubmit = async (e?: React.SyntheticEvent) => {
-    if (e) {
-      e.preventDefault();
-      e.stopPropagation();
-    }
+  const handleSubmit = async (_signatureFile?: File) => {
     if (!dealer || !dealer.email) {
       toast({
         title: "ავტორიზაციის შეცდომა",
@@ -343,21 +339,47 @@ export default function DealerDashboard() {
         "payload.supplierProfile": payload.supplierProfile,
       });
 
-      setLoadingMessage("მონაცემები მოწმდება...");
-      alert("[iOS DEBUG DealerDashboard] About to send axios.post /api/workspace/submit");
-      const response = await axios.post("/api/workspace/submit", payload, {
-        headers: {
-          "Content-Type": "application/json",
-          "Accept": "application/json",
-        },
-        timeout: 120000,
-        validateStatus: (status) => status >= 200 && status < 300,
+      // Build FormData payload to stream chunks and avoid iOS WebKit memory drop
+      const formDataToSend = new FormData();
+      Object.entries(payload).forEach(([key, value]) => {
+        if (value !== undefined && value !== null) {
+          if (typeof value === "object") {
+            formDataToSend.append(key, JSON.stringify(value));
+          } else {
+            formDataToSend.append(key, String(value));
+          }
+        }
       });
 
-      if (response.status === 202 || response.data?.status === "queued") {
+      setLoadingMessage("მონაცემები მოწმდება...");
+      
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 120000);
+
+      const response = await fetch("/api/workspace/submit", {
+        method: "POST",
+        body: formDataToSend,
+        headers: {}, // Let browser set multipart/form-data boundary automatically
+        signal: controller.signal,
+        cache: "no-store",
+        keepalive: false,
+      });
+
+      clearTimeout(timeoutId);
+
+      const responseData = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        const err: any = new Error(responseData.message || responseData.error || `HTTP ${response.status}`);
+        err.status = response.status;
+        err.response = { data: responseData, status: response.status };
+        throw err;
+      }
+
+      if (response.status === 202 || responseData?.status === "queued") {
         setLoadingMessage("თქვენი მოთხოვნა რიგშია. გთხოვთ, არ დახუროთ გვერდი, მიმდინარეობს დამუშავება...");
 
-        const trackingId = response.data?.trackingId || response.data?.id;
+        const trackingId = responseData?.trackingId || responseData?.id;
         if (trackingId) {
           let isCompleted = false;
           while (!isCompleted) {
