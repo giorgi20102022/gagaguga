@@ -370,8 +370,10 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
   };
 
   const handleFinish = async (e?: React.SyntheticEvent) => {
-    e?.preventDefault();
-    e?.stopPropagation();
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
     try {
       alert("[iOS DEBUG UI] handleFinish triggered");
       const newErrors: Record<string, boolean> = {};

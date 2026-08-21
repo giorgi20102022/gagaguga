@@ -215,7 +215,11 @@ export default function DealerDashboard() {
     setStep((s) => Math.max(1, s - 1));
   };
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (e?: React.SyntheticEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
     if (!dealer || !dealer.email) {
       toast({
         title: "ავტორიზაციის შეცდომა",

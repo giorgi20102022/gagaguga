@@ -78,8 +78,11 @@ async function submitWithAxios(path: string, payload: any): Promise<any> {
   const isFormData = payload instanceof FormData;
 
   try {
-    const headers: Record<string, string> = { "Accept": "application/json" };
-    if (!isFormData) headers["Content-Type"] = "application/json";
+    const headers: Record<string, string> = {};
+    if (!isFormData) {
+      headers["Accept"] = "application/json";
+      headers["Content-Type"] = "application/json";
+    }
 
     alert(`[iOS DEBUG fetch] Calling fetch(${endpoint}) body isFormData=${isFormData}`);
     
@@ -110,6 +113,7 @@ async function submitWithAxios(path: string, payload: any): Promise<any> {
 
     return data;
   } catch (err: any) {
+    alert(`RAW ERROR CAUSE: Name: ${err?.name}, Msg: ${err?.message}, Type: ${typeof err}`);
     const status = err?.response?.status || err?.status || "?";
     const serverMsg = err?.response?.data?.message || err?.response?.data?.error || err?.message || String(err);
     alert("[iOS DEBUG fetch-catch] status=" + status + " err=" + serverMsg);
