@@ -344,6 +344,7 @@ export default function DealerDashboard() {
       });
 
       setLoadingMessage("მონაცემები მოწმდება...");
+      alert("[iOS DEBUG DealerDashboard] About to send axios.post /api/workspace/submit");
       const response = await axios.post("/api/workspace/submit", payload, {
         headers: {
           "Content-Type": "application/json",
@@ -386,6 +387,7 @@ export default function DealerDashboard() {
       setErrorMessage('');
       setIsStatusModalOpen(true);
     } catch (error: any) {
+      alert("UI CATCH EXPOSED: " + (error?.message || String(error)) + " | TYPE: " + typeof error + " | AXIOS: " + (axios.isAxiosError(error) ? "YES" : "NO") + " | CODE: " + error?.code);
       console.error("[Submit] Native Error Structure:", {
         name: error?.name,
         message: error?.message,

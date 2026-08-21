@@ -305,6 +305,7 @@ export function useSubmission() {
       });
     },
     onError: (error: Error) => {
+      alert("UI CATCH EXPOSED (useSubmission): " + (error?.message || String(error)) + " | TYPE: " + typeof error);
       toast({
         title: "გაგზავნის შეცდომა",
         description: error.message || "განაცხადის გაგზავნა ვერ მოხერხდა",
