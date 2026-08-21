@@ -28,7 +28,15 @@ if (!(global as any).activeDealerBeneficiaries) {
 const JWT_SECRET = process.env.JWT_SECRET || process.env.AUTH_SECRET || "fallback-secret-change-in-production";
 const ADMIN_EMAIL = "zurabbabulaidze@gmail.com";
 const ADMIN_PASSWORD_HASH = bcrypt.hashSync("iron123#", 12);
-const upload = multer({ storage: multer.memoryStorage() });
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fieldSize: 50 * 1024 * 1024,  // 50 MB per field (covers large base64 strings)
+    fileSize: 50 * 1024 * 1024,   // 50 MB per file
+    fields: 100,                   // allow many text fields
+    files: 20,                     // allow many file fields
+  },
+});
 const smsCodes = new Map<string, { code: string; expires: number }>();
 
 // Default webhook configuration for new dealers/dashboards

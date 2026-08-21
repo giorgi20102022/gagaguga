@@ -33,7 +33,15 @@ app.use(cookieParser());
 import { configureSecurityMiddleware } from "./middleware/security";
 configureSecurityMiddleware(app);
 
-const upload = multer({ storage: multer.memoryStorage() });
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fieldSize: 50 * 1024 * 1024,  // 50 MB per field (covers large base64 strings)
+    fileSize: 50 * 1024 * 1024,   // 50 MB per file
+    fields: 100,                   // allow many text fields
+    files: 20,                     // allow many file fields
+  },
+});
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
