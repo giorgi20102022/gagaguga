@@ -20,7 +20,7 @@ import {
   saveWizardStateSync,
   clearWizardState,
 } from "@/lib/wizardPersistence";
-import { compressBase64Image } from "@/lib/imageUpload";
+import { compressBase64ToBlob } from "@/lib/imageUpload";
 const WIZARD_STORAGE_KEY = "dealer_wizard_state";
 
 // N8N_WEBHOOK_URL constant removed; using sendN8NRequest from api.ts
@@ -255,29 +255,26 @@ export default function DealerDashboard() {
       const isDeliverySelected = deliveryFeeVal > 0;
       const totalPrice = isIronPlus && isDeliverySelected ? itemPrice + deliveryFeeVal : itemPrice;
 
-      // Compress identity and verification images to max 1200px / JPEG 0.65 to ensure high clarity while keeping total payload size small (~100-150KB per image)
+      // Compress identity and verification images to Blobs (max 1200px / JPEG 0.65)
       const [
-        compressedIdFront,
-        compressedIdBack,
-        compressedPassportPhoto,
-        compressedSocialExtract,
-        compressedPensionerCertificate,
-        compressedReceiptPhoto,
+        blobIdFront,
+        blobIdBack,
+        blobPassportPhoto,
+        blobSocialExtract,
+        blobPensionerCertificate,
+        blobReceiptPhoto,
       ] = await Promise.all([
-        compressBase64Image(formData.idFront),
-        compressBase64Image(formData.idBack),
-        compressBase64Image(formData.passportPhoto),
-        compressBase64Image(formData.socialExtract),
-        compressBase64Image(formData.pensionerCertificate),
-        compressBase64Image(formData.receiptPhoto),
+        compressBase64ToBlob(formData.idFront),
+        compressBase64ToBlob(formData.idBack),
+        compressBase64ToBlob(formData.passportPhoto),
+        compressBase64ToBlob(formData.socialExtract),
+        compressBase64ToBlob(formData.pensionerCertificate),
+        compressBase64ToBlob(formData.receiptPhoto),
       ]);
 
-      // Build JSON payload conforming to submissionSchema with all restored documents
+      // Build JSON payload conforming to submissionSchema (non-file fields)
       const payload = {
         documentType: formData.documentType || "id_card",
-        idFront: compressedIdFront || undefined,
-        idBack: compressedIdBack || undefined,
-        passportPhoto: compressedPassportPhoto || undefined,
         firstName: formData.firstName || "",
         lastName: formData.lastName || "",
         idNumber: formData.idNumber || "",
@@ -291,10 +288,8 @@ export default function DealerDashboard() {
         cityDistrict: (formData as any).cityDistrict || "",
         addressVillage: (formData as any).addressVillage || "",
         sociallyVulnerable: Boolean(formData.sociallyVulnerable),
-        socialExtract: compressedSocialExtract || undefined,
         nomadic: Boolean(formData.nomadic),
         pensioner: Boolean(formData.pensioner),
-        pensionerCertificate: compressedPensionerCertificate || undefined,
         supplierName: isGorgiaUser
           ? (formData.supplierName || "")
           : (dealer.name || ""),
@@ -311,7 +306,6 @@ export default function DealerDashboard() {
         ironPlusFee: Number(formData.ironPlusFee || 0),
         finalPayable: Number(formData.finalPayable || 0),
         installationAddress: formData.installationAddress || "",
-        receiptPhoto: compressedReceiptPhoto || formData.receiptPhoto || "",
         signature: signatureBase64,
         digitalConsent: formData.digitalConsent !== false,
         dealerEmail: dealer.email,
@@ -340,6 +334,26 @@ export default function DealerDashboard() {
         receiptVerificationMessage: formData.receiptVerificationMessage,
       };
 
+      // Build FormData payload to stream chunks and avoid iOS WebKit memory drop
+      const formDataToSend = new FormData();
+      Object.entries(payload).forEach(([key, value]) => {
+        if (value !== undefined && value !== null) {
+          if (typeof value === "object") {
+            formDataToSend.append(key, JSON.stringify(value));
+          } else {
+            formDataToSend.append(key, String(value));
+          }
+        }
+      });
+
+      // Append compressed binary Blobs as actual files to prevent fieldSize limits
+      if (blobIdFront) formDataToSend.append("idFront", blobIdFront, "idFront.jpg");
+      if (blobIdBack) formDataToSend.append("idBack", blobIdBack, "idBack.jpg");
+      if (blobPassportPhoto) formDataToSend.append("passportPhoto", blobPassportPhoto, "passportPhoto.jpg");
+      if (blobSocialExtract) formDataToSend.append("socialExtract", blobSocialExtract, "socialExtract.jpg");
+      if (blobPensionerCertificate) formDataToSend.append("pensionerCertificate", blobPensionerCertificate, "pensionerCertificate.jpg");
+      if (blobReceiptPhoto) formDataToSend.append("receiptPhoto", blobReceiptPhoto, "receiptPhoto.jpg");
+
       // Payload size check & logging
       try {
         const payloadJson = JSON.stringify(payload);
@@ -354,18 +368,6 @@ export default function DealerDashboard() {
         "formData.supplierName": formData.supplierName,
         "payload.supplierName": payload.supplierName,
         "payload.supplierProfile": payload.supplierProfile,
-      });
-
-      // Build FormData payload to stream chunks and avoid iOS WebKit memory drop
-      const formDataToSend = new FormData();
-      Object.entries(payload).forEach(([key, value]) => {
-        if (value !== undefined && value !== null) {
-          if (typeof value === "object") {
-            formDataToSend.append(key, JSON.stringify(value));
-          } else {
-            formDataToSend.append(key, String(value));
-          }
-        }
       });
 
       setLoadingMessage("მონაცემები მოწმდება...");

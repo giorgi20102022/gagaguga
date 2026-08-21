@@ -219,3 +219,70 @@ export async function compressBase64Image(
     img.src = trimmed;
   });
 }
+
+/**
+ * Downscale and compress a base64 data URL to a maximum dimension (default 1200px)
+ * and JPEG quality (default 0.65) and return a binary Blob.
+ */
+export async function compressBase64ToBlob(
+  base64?: string,
+  maxWidth = 1200,
+  maxHeight = 1200,
+  quality = 0.65
+): Promise<Blob | null> {
+  if (!base64 || typeof base64 !== "string") return null;
+  const trimmed = base64.trim();
+  if (!trimmed) return null;
+
+  if (!trimmed.startsWith("data:image")) {
+    try {
+      const raw = atob(trimmed);
+      const buf = new Uint8Array(raw.length);
+      for (let i = 0; i < raw.length; i++) buf[i] = raw.charCodeAt(i);
+      return new Blob([buf], { type: "image/jpeg" });
+    } catch {
+      return null;
+    }
+  }
+
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const w = img.naturalWidth || img.width;
+      const h = img.naturalHeight || img.height;
+      if (!w || !h) {
+        resolve(null);
+        return;
+      }
+
+      const scale = Math.min(1, maxWidth / Math.max(w, h));
+      const targetW = Math.max(1, Math.round(w * scale));
+      const targetH = Math.max(1, Math.round(h * scale));
+
+      const canvas = document.createElement("canvas");
+      canvas.width = targetW;
+      canvas.height = targetH;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        resolve(null);
+        return;
+      }
+
+      ctx.fillStyle = "#FFFFFF";
+      ctx.fillRect(0, 0, targetW, targetH);
+      ctx.drawImage(img, 0, 0, targetW, targetH);
+
+      try {
+        canvas.toBlob(
+          (blob) => resolve(blob),
+          "image/jpeg",
+          quality
+        );
+      } catch {
+        resolve(null);
+      }
+    };
+    img.onerror = () => resolve(null);
+    img.src = trimmed;
+  });
+}

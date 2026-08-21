@@ -3,7 +3,7 @@ import { type SubmissionInput } from "@shared/routes";
 import { useToast } from "@/hooks/use-toast";
 import axios from "axios";
 import { registerDealerPersonalIdOnPortal } from "@/lib/dealerPersonalId";
-import { compressBase64Image } from "@/lib/imageUpload";
+import { compressBase64ToBlob } from "@/lib/imageUpload";
 
 // Duplicate N8N_WEBHOOK_URL removed; using exported constant later
 
@@ -207,28 +207,25 @@ export function useSubmission() {
         const isDeliverySelected = deliveryFeeVal > 0;
         const totalPrice = isIronPlus && isDeliverySelected ? itemPrice + deliveryFeeVal : itemPrice;
 
-        // Compress identity and verification images to max 1200px / JPEG 0.65 to ensure high clarity while keeping total payload size small (~100-150KB per image)
+        // Compress identity and verification images to Blobs (max 1200px / JPEG 0.65)
         const [
-          compressedIdFront,
-          compressedIdBack,
-          compressedPassportPhoto,
-          compressedSocialExtract,
-          compressedPensionerCertificate,
-          compressedReceiptPhoto,
+          blobIdFront,
+          blobIdBack,
+          blobPassportPhoto,
+          blobSocialExtract,
+          blobPensionerCertificate,
+          blobReceiptPhoto,
         ] = await Promise.all([
-          compressBase64Image(data.idFront),
-          compressBase64Image(data.idBack),
-          compressBase64Image(data.passportPhoto),
-          compressBase64Image(data.socialExtract),
-          compressBase64Image(data.pensionerCertificate),
-          compressBase64Image(data.receiptPhoto),
+          compressBase64ToBlob(data.idFront),
+          compressBase64ToBlob(data.idBack),
+          compressBase64ToBlob(data.passportPhoto),
+          compressBase64ToBlob(data.socialExtract),
+          compressBase64ToBlob(data.pensionerCertificate),
+          compressBase64ToBlob(data.receiptPhoto),
         ]);
 
         payload = {
           documentType: data.documentType || "id_card",
-          idFront: compressedIdFront || undefined,
-          idBack: compressedIdBack || undefined,
-          passportPhoto: compressedPassportPhoto || undefined,
           firstName: data.firstName || "",
           lastName: data.lastName || "",
           idNumber: data.idNumber || "",
@@ -242,10 +239,8 @@ export function useSubmission() {
           cityDistrict: (data as any).cityDistrict || "",
           addressVillage: (data as any).addressVillage || "",
           sociallyVulnerable: Boolean(data.sociallyVulnerable),
-          socialExtract: compressedSocialExtract || undefined,
           nomadic: Boolean(data.nomadic),
           pensioner: Boolean(data.pensioner),
-          pensionerCertificate: compressedPensionerCertificate || undefined,
           supplierName: data.supplierName || "",
           supplierId: data.supplierId || "",
           supplierProfile,
@@ -260,7 +255,6 @@ export function useSubmission() {
           user_copayment: finalPayableValue,
           "საბოლოო_გადასახდელი": finalPayableValue,
           installationAddress: data.installationAddress || "",
-          receiptPhoto: compressedReceiptPhoto || data.receiptPhoto || "",
           signature: signatureBase64,
           digitalConsent: data.digitalConsent !== false,
           dealerEmail,
@@ -293,6 +287,14 @@ export function useSubmission() {
             formData.append(key, typeof value === 'object' ? JSON.stringify(value) : String(value));
           }
         });
+
+        // Append compressed binary Blobs as actual files to prevent fieldSize limits
+        if (blobIdFront) formData.append("idFront", blobIdFront, "idFront.jpg");
+        if (blobIdBack) formData.append("idBack", blobIdBack, "idBack.jpg");
+        if (blobPassportPhoto) formData.append("passportPhoto", blobPassportPhoto, "passportPhoto.jpg");
+        if (blobSocialExtract) formData.append("socialExtract", blobSocialExtract, "socialExtract.jpg");
+        if (blobPensionerCertificate) formData.append("pensionerCertificate", blobPensionerCertificate, "pensionerCertificate.jpg");
+        if (blobReceiptPhoto) formData.append("receiptPhoto", blobReceiptPhoto, "receiptPhoto.jpg");
 
         console.log("[useSubmission] dealerKey:", dealerKey);
 
