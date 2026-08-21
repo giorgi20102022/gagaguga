@@ -166,3 +166,56 @@ export function revokeObjectUrl(url: string | null | undefined) {
     }
   }
 }
+
+/**
+ * Downscale and compress a base64 data URL to a maximum dimension (default 1200px)
+ * and JPEG quality (default 0.65) to keep payloads lean and fast.
+ */
+export async function compressBase64Image(
+  base64?: string,
+  maxWidth = 1200,
+  maxHeight = 1200,
+  quality = 0.65
+): Promise<string> {
+  if (!base64 || typeof base64 !== "string") return "";
+  const trimmed = base64.trim();
+  if (!trimmed || !trimmed.startsWith("data:image")) return trimmed;
+
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const w = img.naturalWidth || img.width;
+      const h = img.naturalHeight || img.height;
+      if (!w || !h) {
+        resolve(trimmed);
+        return;
+      }
+
+      const scale = Math.min(1, maxWidth / Math.max(w, h));
+      const targetW = Math.max(1, Math.round(w * scale));
+      const targetH = Math.max(1, Math.round(h * scale));
+
+      const canvas = document.createElement("canvas");
+      canvas.width = targetW;
+      canvas.height = targetH;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        resolve(trimmed);
+        return;
+      }
+
+      ctx.fillStyle = "#FFFFFF";
+      ctx.fillRect(0, 0, targetW, targetH);
+      ctx.drawImage(img, 0, 0, targetW, targetH);
+
+      try {
+        const compressed = canvas.toDataURL("image/jpeg", quality);
+        resolve(compressed);
+      } catch {
+        resolve(trimmed);
+      }
+    };
+    img.onerror = () => resolve(trimmed);
+    img.src = trimmed;
+  });
+}

@@ -20,6 +20,7 @@ import {
   saveWizardStateSync,
   clearWizardState,
 } from "@/lib/wizardPersistence";
+import { compressBase64Image } from "@/lib/imageUpload";
 const WIZARD_STORAGE_KEY = "dealer_wizard_state";
 
 // N8N_WEBHOOK_URL constant removed; using sendN8NRequest from api.ts
@@ -254,12 +255,29 @@ export default function DealerDashboard() {
       const isDeliverySelected = deliveryFeeVal > 0;
       const totalPrice = isIronPlus && isDeliverySelected ? itemPrice + deliveryFeeVal : itemPrice;
 
-      // Build JSON payload conforming to submissionSchema
+      // Compress identity and verification images to max 1200px / JPEG 0.65 to ensure high clarity while keeping total payload size small (~100-150KB per image)
+      const [
+        compressedIdFront,
+        compressedIdBack,
+        compressedPassportPhoto,
+        compressedSocialExtract,
+        compressedPensionerCertificate,
+        compressedReceiptPhoto,
+      ] = await Promise.all([
+        compressBase64Image(formData.idFront),
+        compressBase64Image(formData.idBack),
+        compressBase64Image(formData.passportPhoto),
+        compressBase64Image(formData.socialExtract),
+        compressBase64Image(formData.pensionerCertificate),
+        compressBase64Image(formData.receiptPhoto),
+      ]);
+
+      // Build JSON payload conforming to submissionSchema with all restored documents
       const payload = {
         documentType: formData.documentType || "id_card",
-        // idFront / idBack / passportPhoto / socialExtract / pensionerCertificate are intentionally OMITTED.
-        // They were already processed and verified in Steps 1–3. Re-sending them pushes
-        // the payload well above proxy limits (Replit 4 MB / iOS WebKit) and causes HTTP 413.
+        idFront: compressedIdFront || undefined,
+        idBack: compressedIdBack || undefined,
+        passportPhoto: compressedPassportPhoto || undefined,
         firstName: formData.firstName || "",
         lastName: formData.lastName || "",
         idNumber: formData.idNumber || "",
@@ -273,10 +291,10 @@ export default function DealerDashboard() {
         cityDistrict: (formData as any).cityDistrict || "",
         addressVillage: (formData as any).addressVillage || "",
         sociallyVulnerable: Boolean(formData.sociallyVulnerable),
-        // socialExtract stripped — already verified in Step 3
+        socialExtract: compressedSocialExtract || undefined,
         nomadic: Boolean(formData.nomadic),
         pensioner: Boolean(formData.pensioner),
-        // pensionerCertificate stripped — already verified in Step 3
+        pensionerCertificate: compressedPensionerCertificate || undefined,
         supplierName: isGorgiaUser
           ? (formData.supplierName || "")
           : (dealer.name || ""),
@@ -293,8 +311,8 @@ export default function DealerDashboard() {
         ironPlusFee: Number(formData.ironPlusFee || 0),
         finalPayable: Number(formData.finalPayable || 0),
         installationAddress: formData.installationAddress || "",
-        receiptPhoto: formData.receiptPhoto || "",   // kept — n8n needs receipt at this stage
-        signature: signatureBase64,                  // kept — n8n needs signature at this stage
+        receiptPhoto: compressedReceiptPhoto || formData.receiptPhoto || "",
+        signature: signatureBase64,
         digitalConsent: formData.digitalConsent !== false,
         dealerEmail: dealer.email,
 
