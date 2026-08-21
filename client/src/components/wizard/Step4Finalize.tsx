@@ -87,7 +87,8 @@ function SignaturePreview({ firstName, lastName, onGenerate, canvasRef }: {
       // Ensure the GeoElguja font is loaded before drawing
       await document.fonts.load('48px "GeoElgujaBase64"');
 
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.font = '48px "GeoElgujaBase64"';
       (ctx as any).letterSpacing = "0px";
       (ctx as any).wordSpacing = "0px";
@@ -96,17 +97,18 @@ function SignaturePreview({ firstName, lastName, onGenerate, canvasRef }: {
       ctx.textBaseline = 'middle';
       ctx.fillText(convertToAscii(signatureText), canvas.width / 2, canvas.height / 2);
 
-      onGenerateRef.current(canvas.toDataURL('image/png'));
+      onGenerateRef.current(canvas.toDataURL('image/jpeg', 0.5));
     } catch (err) {
       console.error('Font load failed:', err);
       // Fallback to system sans‑serif if custom font fails
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.font = 'italic normal 48px sans-serif';
       ctx.fillStyle = '#0038A8';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(renderedSignature, canvas.width / 2, canvas.height / 2);
-      onGenerateRef.current(canvas.toDataURL('image/png'));
+      onGenerateRef.current(canvas.toDataURL('image/jpeg', 0.5));
     }
   }, [signatureText]);
 

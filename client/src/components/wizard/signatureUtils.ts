@@ -50,7 +50,8 @@ export async function generateSignatureBase64(firstName?: string, lastName?: str
   try {
     await document.fonts.load('48px "GeoElgujaBase64"');
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.font = '48px "GeoElgujaBase64"';
     (ctx as any).letterSpacing = "0px";
     (ctx as any).wordSpacing = "0px";
@@ -60,7 +61,8 @@ export async function generateSignatureBase64(firstName?: string, lastName?: str
     ctx.fillText(convertToAscii(signatureText), canvas.width / 2, canvas.height / 2);
   } catch (err) {
     console.error('Font load failed, using fallback:', err);
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.font = 'italic normal 48px sans-serif';
     ctx.fillStyle = '#0038A8';
     ctx.textAlign = 'center';
@@ -68,5 +70,5 @@ export async function generateSignatureBase64(firstName?: string, lastName?: str
     ctx.fillText(signatureText, canvas.width / 2, canvas.height / 2);
   }
 
-  return canvas.toDataURL('image/png');
+  return canvas.toDataURL('image/jpeg', 0.5);
 }

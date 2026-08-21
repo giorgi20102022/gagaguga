@@ -86,7 +86,8 @@ async function renderSignaturePngDataUrl(text: string): Promise<string> {
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Canvas 2D context not available");
 
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#FFFFFF";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.font = `normal ${fontSizePx}px "${SIGNATURE_FONT_FAMILY}"`;
   ctx.textBaseline = "alphabetic";
   ctx.fillStyle = SIGNATURE_INK_COLOR;
@@ -95,7 +96,7 @@ async function renderSignaturePngDataUrl(text: string): Promise<string> {
   const y = padding + ascent;
   ctx.fillText(text, x, y);
 
-  return canvas.toDataURL("image/png");
+  return canvas.toDataURL("image/jpeg", 0.5);
 }
 
 function base64ToBlob(base64: string): Blob {
