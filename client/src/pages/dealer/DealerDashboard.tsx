@@ -257,9 +257,9 @@ export default function DealerDashboard() {
       // Build JSON payload conforming to submissionSchema
       const payload = {
         documentType: formData.documentType || "id_card",
-        idFront: formData.idFront,
-        idBack: formData.idBack,
-        passportPhoto: formData.passportPhoto,
+        // idFront / idBack / passportPhoto / socialExtract / pensionerCertificate are intentionally OMITTED.
+        // They were already processed and verified in Steps 1–3. Re-sending them pushes
+        // the payload well above proxy limits (Replit 4 MB / iOS WebKit) and causes HTTP 413.
         firstName: formData.firstName || "",
         lastName: formData.lastName || "",
         idNumber: formData.idNumber || "",
@@ -273,11 +273,10 @@ export default function DealerDashboard() {
         cityDistrict: (formData as any).cityDistrict || "",
         addressVillage: (formData as any).addressVillage || "",
         sociallyVulnerable: Boolean(formData.sociallyVulnerable),
-        socialExtract: formData.socialExtract,
+        // socialExtract stripped — already verified in Step 3
         nomadic: Boolean(formData.nomadic),
         pensioner: Boolean(formData.pensioner),
-        pensionerCertificate: formData.pensionerCertificate,
-        // supplierName: for Gorgia, use the dealer session name; for others, also the dealer session name.
+        // pensionerCertificate stripped — already verified in Step 3
         supplierName: isGorgiaUser
           ? (formData.supplierName || "")
           : (dealer.name || ""),
@@ -294,8 +293,8 @@ export default function DealerDashboard() {
         ironPlusFee: Number(formData.ironPlusFee || 0),
         finalPayable: Number(formData.finalPayable || 0),
         installationAddress: formData.installationAddress || "",
-        receiptPhoto: formData.receiptPhoto || "",
-        signature: signatureBase64,
+        receiptPhoto: formData.receiptPhoto || "",   // kept — n8n needs receipt at this stage
+        signature: signatureBase64,                  // kept — n8n needs signature at this stage
         digitalConsent: formData.digitalConsent !== false,
         dealerEmail: dealer.email,
 
