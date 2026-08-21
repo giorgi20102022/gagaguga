@@ -80,13 +80,13 @@ async function submitWithAxios(path: string, payload: object): Promise<any> {
   console.log(`[useSubmission] Payload size: ${sizeKb} KB — sending via axios.post(${endpoint})`);
 
   try {
-    // ── DIAGNOSTIC axios-start ─────────────────────────────────────────────
-    alert("[iOS DEBUG axios] Calling axios.post(" + endpoint + ") body=" + sizeKb + "KB");
+    const isFormData = payload instanceof FormData;
+    const headers: Record<string, string> = { "Accept": "application/json" };
+    if (!isFormData) headers["Content-Type"] = "application/json";
+
+    alert(`[iOS DEBUG axios] Calling axios.post(${endpoint}) body isFormData=${isFormData}`);
     const response = await axios.post(endpoint, payload, {
-      headers: {
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-      },
+      headers,
       withCredentials: true,
       timeout: 40000, // 40 seconds timeout for mobile persistence
     });
@@ -121,6 +121,7 @@ export function useSubmission() {
 
       let payload: any;
       let dealerEmail = "";
+      let formData: FormData = new FormData();
 
       try {
         await registerDealerPersonalIdOnPortal(data);
@@ -241,10 +242,16 @@ export function useSubmission() {
           receiptVerificationMessage: data.receiptVerificationMessage,
         };
 
+        formData = new FormData();
+        Object.entries(payload).forEach(([key, value]) => {
+          if (value !== undefined && value !== null) {
+            formData.append(key, typeof value === 'object' ? JSON.stringify(value) : String(value));
+          }
+        });
+
         console.log("[useSubmission] dealerKey:", dealerKey);
 
-        const _diagPayloadSize = JSON.stringify(payload).length;
-        alert("[iOS DEBUG D] Step 1 — About to post via Axios. Payload chars=" + _diagPayloadSize + " (~" + Math.round(_diagPayloadSize/1024) + "KB). dealerEmail=" + dealerEmail);
+        alert("[iOS DEBUG D] Step 1 — About to post via Axios with FormData.");
 
         alert("Payload built successfully, about to send via Axios");
       } catch (prepErr: any) {
@@ -254,7 +261,7 @@ export function useSubmission() {
       }
 
       try {
-        const _result = await submitWithAxios("/api/submission/submit", payload);
+        const _result = await submitWithAxios("/api/submission/submit", formData);
         // ── DIAGNOSTIC E: Axios returned ─────────────────────────────────
         alert("[iOS DEBUG E] Step 2 — submitWithAxios completed OK. Result=" + JSON.stringify(_result).slice(0, 120));
         return _result;

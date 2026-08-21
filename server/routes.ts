@@ -1475,7 +1475,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
   });
 
   // Proxy the submission to n8n webhook (JWT auth — works for both admin and dealer sessions)
-  app.post("/api/submission/submit", async (req: Request, res: Response) => {
+  app.post("/api/submission/submit", upload.none(), async (req: Request, res: Response) => {
     const bearerToken = req.headers.authorization?.split(" ")[1];
     const token =
       (bearerToken && bearerToken !== "null" && bearerToken !== "undefined" ? bearerToken : undefined)
@@ -1495,7 +1495,24 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
     }
 
     try {
-      const input = submissionSchema.parse(req.body);
+      let bodyData = req.body;
+      if (req.is('multipart/form-data')) {
+         bodyData = {};
+         for (const [k, v] of Object.entries(req.body)) {
+            if (typeof v === 'string') {
+               if (v === 'true') bodyData[k] = true;
+               else if (v === 'false') bodyData[k] = false;
+               else if (!isNaN(Number(v)) && v.trim() !== '' && ['price', 'subsidyRate', 'subsidyAmount', 'deliveryFee', 'ironPlusFee', 'finalPayable', 'itemPrice', 'totalPrice', 'ovenCodeRow'].includes(k)) {
+                 bodyData[k] = Number(v);
+               } else {
+                 bodyData[k] = v;
+               }
+            } else {
+               bodyData[k] = v;
+            }
+         }
+      }
+      const input = submissionSchema.parse(bodyData);
 
       // Normalize gender to Georgian + boolean flags
       const genderMap: Record<string, string> = { M: "მამრობითი", F: "მდედრობითი", m: "მამრობითი", f: "მდედრობითი" };
