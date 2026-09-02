@@ -32,6 +32,28 @@ function unwrapN8nRecord(raw: unknown): Record<string, unknown> | null {
   return record;
 }
 
+/** Strips the "Reason: [...]" wrapper n8n uses; falls back to the raw text if it doesn't match. */
+function cleanN8nMessage(message: string): string {
+  const match = message.trim().match(/^Reason:\s*\[([\s\S]*)\]$/i);
+  return match ? match[1].trim() : message.trim();
+}
+
+/** Extracts the business-logic error n8n reports via `{ success: false, message }`. */
+function extractN8nBusinessError(raw: unknown): string | null {
+  let current: unknown = raw;
+  if (Array.isArray(current)) {
+    current = current[0];
+  }
+  if (!current || typeof current !== "object") return null;
+
+  const record = current as Record<string, unknown>;
+  if (record.success === false && typeof record.message === "string" && record.message.trim()) {
+    return cleanN8nMessage(record.message);
+  }
+
+  return null;
+}
+
 export function mapPassportExtracted(raw: unknown): PassportExtractedData | null {
   const extracted = unwrapN8nRecord(raw);
   if (!extracted) return null;
@@ -81,12 +103,18 @@ async function postPassportFormData(formData: FormData, signal: AbortSignal): Pr
     });
   }
 
-  const proxyRes = await fetch("/api/vision/extract-passport-file", {
-    method: "POST",
-    body: proxyForm,
-    credentials: "include",
-    signal,
-  });
+  let proxyRes: Response;
+  try {
+    proxyRes = await fetch("/api/vision/extract-passport-file", {
+      method: "POST",
+      body: proxyForm,
+      credentials: "include",
+      signal,
+    });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") throw err;
+    throw new Error("სურათის გაგზავნა ვერ მოხერხდა. გთხოვთ, შეამოწმოთ ინტერნეტ კავშირი და სცადოთ თავიდან");
+  }
 
   if (!proxyRes.ok) {
     let message = `OCR proxy failed (${proxyRes.status})`;
@@ -97,10 +125,14 @@ async function postPassportFormData(formData: FormData, signal: AbortSignal): Pr
       const errText = await proxyRes.text().catch(() => "");
       if (errText) message = errText;
     }
-    throw new Error(message);
+    throw new Error(cleanN8nMessage(message));
   }
 
-  return proxyRes.json();
+  try {
+    return await proxyRes.json();
+  } catch {
+    throw new Error("სერვერის პასუხის დამუშავება ვერ მოხერხდა. გთხოვთ, სცადოთ თავიდან");
+  }
 }
 
 /** Sends passport image to n8n OCR immediately after capture. Non-blocking for UI thread. */
@@ -123,6 +155,12 @@ export async function extractPassportOcr(
 
   try {
     const raw = await postPassportFormData(formData, controller.signal);
+
+    const businessError = extractN8nBusinessError(raw);
+    if (businessError) {
+      throw new Error(businessError);
+    }
+
     const mapped = mapPassportExtracted(raw);
     if (!mapped?.firstName || !mapped?.lastName) {
       throw new Error("მონაცემების ამოკითხვა ვერ მოხერხდა. გთხოვთ, ატვირთოთ უფრო მკაფიო ფოტო");

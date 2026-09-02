@@ -56,6 +56,9 @@ export async function ensureDbBasics() {
       IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='dealers' AND column_name='password') THEN
         ALTER TABLE dealers ADD COLUMN password TEXT;
       END IF;
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='dealers' AND column_name='plain_password') THEN
+        ALTER TABLE dealers ADD COLUMN plain_password TEXT;
+      END IF;
       IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='dealers' AND column_name='created_at') THEN
         ALTER TABLE dealers ADD COLUMN created_at TIMESTAMP DEFAULT NOW();
       END IF;
@@ -178,17 +181,17 @@ export async function ensureDbBasics() {
   console.log("[db] Seeding legacy dealers with password: Dealer123#");
 
   await dbPool.query(
-    `INSERT INTO dealers (key, name, identification_code, email, password)
-     VALUES ($1, $2, $3, $4, $5)
-     ON CONFLICT (key) DO UPDATE SET email = EXCLUDED.email, password = EXCLUDED.password`,
-    ["iron", "Iron+", "000000000", "demo@example.com", defaultDealerPassword],
+    `INSERT INTO dealers (key, name, identification_code, email, password, plain_password)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (key) DO UPDATE SET email = EXCLUDED.email, password = EXCLUDED.password, plain_password = EXCLUDED.plain_password`,
+    ["iron", "Iron+", "000000000", "demo@example.com", defaultDealerPassword, "Dealer123#"],
   );
 
   await dbPool.query(
-    `INSERT INTO dealers (key, name, identification_code, email, password)
-     VALUES ($1, $2, $3, $4, $5)
-     ON CONFLICT (key) DO UPDATE SET email = EXCLUDED.email, password = EXCLUDED.password`,
-    ["gorgia", "Gorgia", "000000000", "info@gorgia.ge", defaultDealerPassword],
+    `INSERT INTO dealers (key, name, identification_code, email, password, plain_password)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (key) DO UPDATE SET email = EXCLUDED.email, password = EXCLUDED.password, plain_password = EXCLUDED.plain_password`,
+    ["gorgia", "Gorgia", "000000000", "info@gorgia.ge", defaultDealerPassword, "Dealer123#"],
   );
 
   // Seed default products only if the products table is empty

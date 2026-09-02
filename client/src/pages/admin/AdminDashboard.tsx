@@ -35,6 +35,7 @@ export default function AdminDashboard() {
     name: string;
     identificationCode?: string | null;
     email: string | null;
+    plainPassword?: string | null;
     whatsappNumber?: string | null;
     sendToRda?: boolean | null;
     requireSmsVerification?: boolean | null;
@@ -50,6 +51,7 @@ export default function AdminDashboard() {
   const [editingDealer, setEditingDealer] = useState<DealerRecord | null>(null);
   const [editDealerForm, setEditDealerForm] = useState({ name: "", identificationCode: "", email: "", password: "", whatsappNumber: "", sendToRda: false, requireSmsVerification: true });
   const [showEditPassword, setShowEditPassword] = useState(false);
+  const [originalEditPassword, setOriginalEditPassword] = useState("");
 
   // New Product Form State
   const [newProduct, setNewProduct] = useState({
@@ -137,7 +139,9 @@ export default function AdminDashboard() {
       if (editDealerForm.name) body.name = editDealerForm.name;
       if (editDealerForm.identificationCode) body.identificationCode = editDealerForm.identificationCode;
       if (editDealerForm.email) body.email = editDealerForm.email;
-      if (editDealerForm.password) body.password = editDealerForm.password;
+      if (editDealerForm.password && editDealerForm.password !== originalEditPassword) {
+        body.password = editDealerForm.password;
+      }
       body.whatsappNumber = editDealerForm.whatsappNumber || null;
       body.sendToRda = editDealerForm.sendToRda;
       body.requireSmsVerification = editDealerForm.requireSmsVerification;
@@ -529,7 +533,8 @@ export default function AdminDashboard() {
                               variant="ghost"
                               onClick={() => {
                                 setEditingDealer(d);
-                                setEditDealerForm({ name: d.name, identificationCode: String(d.identificationCode || ""), email: d.email || "", password: "", whatsappNumber: d.whatsappNumber || "", sendToRda: !!d.sendToRda, requireSmsVerification: d.requireSmsVerification !== false });
+                                setEditDealerForm({ name: d.name, identificationCode: String(d.identificationCode || ""), email: d.email || "", password: d.plainPassword || "", whatsappNumber: d.whatsappNumber || "", sendToRda: !!d.sendToRda, requireSmsVerification: d.requireSmsVerification !== false });
+                                setOriginalEditPassword(d.plainPassword || "");
                                 setShowEditPassword(false);
                               }}
                               className="h-8 w-8 rounded-lg"
@@ -597,7 +602,7 @@ export default function AdminDashboard() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label>ახალი პაროლი (ცარიელი = არ შეიცვალოს)</Label>
+                    <Label>მიმდინარე პაროლი (ცარიელი = არ შეიცვალოს)</Label>
                     <div className="relative">
                       <Input
                         type={showEditPassword ? "text" : "password"}

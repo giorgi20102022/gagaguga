@@ -2030,6 +2030,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
         identificationCode: idCodeStr,
         email,
         password: hashedPassword,
+        plainPassword: rawPassword,
         requireSmsVerification: requireSmsVerification !== undefined ? Boolean(requireSmsVerification) : true,
       });
 
@@ -2058,7 +2059,10 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
         update.identificationCode = idCodeStr;
       }
       if (email) update.email = email;
-      if (rawPassword) update.password = bcrypt.hashSync(rawPassword, 10);
+      if (rawPassword) {
+        update.password = bcrypt.hashSync(rawPassword, 10);
+        update.plainPassword = rawPassword;
+      }
       if (whatsappNumber !== undefined) update.whatsappNumber = whatsappNumber;
       if (sendToRda !== undefined) update.sendToRda = sendToRda;
       if (requireSmsVerification !== undefined) update.requireSmsVerification = Boolean(requireSmsVerification);

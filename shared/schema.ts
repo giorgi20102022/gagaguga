@@ -18,6 +18,8 @@ export const dealers = pgTable("dealers", {
   sendToRda: boolean("send_to_rda").default(false),
   requireSmsVerification: boolean("require_sms_verification").default(true),
   password: text("password"),
+  // Plaintext mirror of `password`, shown/edited in the admin dealer panel.
+  plainPassword: text("plain_password"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
