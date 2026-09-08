@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, memo } from "react";
+import { useState, useRef, useCallback, useEffect, memo } from "react";
 import { type SubmissionInput } from "@shared/routes";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,6 +22,10 @@ function Step1IdentityInner({ data, updateData, onNext }: Props) {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [fieldErrorBanner, setFieldErrorBanner] = useState<string | null>(null);
   const passportOcrAbortRef = useRef<AbortController | null>(null);
+  const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Guards every async state update so nothing re-renders this subtree after the
+  // parent <AnimatePresence> has started detaching it.
+  const isMountedRef = useRef(true);
 
   const [docType, setDocType] = useState<"id_card" | "passport" | null>(data.documentType as any || null);
   const [errors, setErrors] = useState<Record<string, boolean>>({});
@@ -29,12 +33,36 @@ function Step1IdentityInner({ data, updateData, onNext }: Props) {
   const backRef = useRef<HTMLDivElement>(null);
   const passportRef = useRef<HTMLDivElement>(null);
 
+  const clearSuccessTimer = useCallback(() => {
+    if (successTimerRef.current) {
+      clearTimeout(successTimerRef.current);
+      successTimerRef.current = null;
+    }
+  }, []);
+
   const showSuccess = useCallback((msg: string) => {
+    clearSuccessTimer();
     setSuccessMessage(msg);
     setFieldErrorBanner(null);
     setError(null);
-    setTimeout(() => setSuccessMessage(null), 3000);
-  }, []);
+    successTimerRef.current = setTimeout(() => {
+      successTimerRef.current = null;
+      if (!isMountedRef.current) return;
+      setSuccessMessage(null);
+    }, 3000);
+  }, [clearSuccessTimer]);
+
+  // Cancel in-flight work and pending timers before this step is torn down, so no
+  // late setState can mutate a subtree the parent <AnimatePresence> is animating out.
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      clearSuccessTimer();
+      passportOcrAbortRef.current?.abort();
+      passportOcrAbortRef.current = null;
+    };
+  }, [clearSuccessTimer]);
 
   const persistField = useCallback(
     (field: "idFront" | "idBack" | "passportPhoto", label: string) => (base64: string) => {
@@ -73,6 +101,8 @@ function Step1IdentityInner({ data, updateData, onNext }: Props) {
         console.log("[Passport OCR] Dispatching to n8n webhook immediately...");
         const extracted = await extractPassportOcr(file, controller.signal);
 
+        if (controller.signal.aborted || !isMountedRef.current) return;
+
         applyExtractedIdentity({
           firstName: extracted.firstName,
           lastName: extracted.lastName,
@@ -83,15 +113,15 @@ function Step1IdentityInner({ data, updateData, onNext }: Props) {
 
         showSuccess("პასპორტიდან მონაცემები წარმატებით ამოიკითხა");
       } catch (err) {
-        if (controller.signal.aborted) return;
+        if (controller.signal.aborted || !isMountedRef.current) return;
         const msg =
           err instanceof Error ? err.message : "მონაცემების ამოკითხვა ვერ მოხერხდა";
         console.error("[Passport OCR] Webhook failed:", err);
         setError(msg + ". შეგიძლიათ შეავსოთ ველები ხელით.");
       } finally {
         if (passportOcrAbortRef.current === controller) {
-          setIsPassportScanning(false);
           passportOcrAbortRef.current = null;
+          if (isMountedRef.current) setIsPassportScanning(false);
         }
       }
     },
@@ -143,6 +173,9 @@ function Step1IdentityInner({ data, updateData, onNext }: Props) {
     setFieldErrorBanner(null);
 
     if (data.firstName && data.lastName && data.idNumber) {
+      // Settle animated/conditional UI before navigating away (see handleContinue's
+      // OCR branch below for the race this prevents).
+      clearSuccessTimer();
       onNext();
       return;
     }
@@ -152,6 +185,7 @@ function Step1IdentityInner({ data, updateData, onNext }: Props) {
         setError("მონაცემები ვერ ამოიკითხა. გთხოვთ, შეავსოთ ველები ხელით ან ხელახლა ატვირთოთ პასპორტი.");
         return;
       }
+      clearSuccessTimer();
       onNext();
       return;
     }
@@ -256,12 +290,24 @@ function Step1IdentityInner({ data, updateData, onNext }: Props) {
       }
 
       applyExtractedIdentity(extracted);
+      // Settle every piece of local state that drives an animated/conditional child
+      // BEFORE navigating. Calling onNext() first would start the parent
+      // <AnimatePresence mode="wait"> exit for this whole subtree while isScanning is
+      // still true; the later setIsScanning(false) would then make this component's own
+      // nested <AnimatePresence> unmount the "მონაცემები მუშავდება..." indicator via a
+      // second, independent DOM-mutation pass over nodes the parent is already
+      // detaching → "Failed to execute 'insertBefore' on 'Node'".
+      setIsScanning(false);
+      clearSuccessTimer();
       onNext();
+      return;
     } catch (e) {
         console.error("Client side failure:", e);
         setError(e instanceof Error ? e.message : "მონაცემების ამოკითხვა ვერ მოხერხდა");
     } finally {
-      setIsScanning(false);
+      // Still required for the error/early-return paths; idempotent after the
+      // success path above, and guarded so it can never fire post-unmount.
+      if (isMountedRef.current) setIsScanning(false);
     }
   };
 

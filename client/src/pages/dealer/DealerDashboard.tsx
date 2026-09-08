@@ -423,6 +423,11 @@ export default function DealerDashboard() {
       try { localStorage.clear(); } catch { /* ignore Safari Private Browsing restriction */ }
       try { sessionStorage.clear(); } catch { /* ignore Safari Private Browsing restriction */ }
       await clearWizardState(WIZARD_STORAGE_KEY);
+      // Settle isSubmitting (a prop Step4Finalize renders from) before setStep swaps the
+      // step out. Leaving it to the finally block would flip it in a separate render
+      // pass, re-rendering a step subtree the <AnimatePresence mode="wait"> below is
+      // already animating out.
+      setIsSubmitting(false);
       setFormData({});
       setStep(1);
       setErrorMessage('');
@@ -458,6 +463,7 @@ export default function DealerDashboard() {
       setSubmissionStatus('error');
       setIsStatusModalOpen(true);
     } finally {
+      // Still required for the error path; idempotent after the success path above.
       setIsSubmitting(false);
     }
   };

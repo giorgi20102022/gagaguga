@@ -1,4 +1,5 @@
 import React, { memo, useState, useRef, useId, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { useMediaUpload } from "@/hooks/use-media-upload";
 import { cn } from "@/lib/utils";
 import { Camera, Image as ImageIcon, X, UploadCloud } from "lucide-react";
@@ -96,10 +97,11 @@ function MediaUploadZoneInner({
   // Handle camera stream acquisition
   useEffect(() => {
     let isCancelled = false;
+    let startTimer: ReturnType<typeof setTimeout> | null = null;
 
     if (isCameraOpen) {
       cleanUpStream();
-      setTimeout(() => {
+      startTimer = setTimeout(() => {
         if (isCancelled) return;
         navigator.mediaDevices
           .getUserMedia({
@@ -138,6 +140,7 @@ function MediaUploadZoneInner({
 
     return () => {
       isCancelled = true;
+      if (startTimer) clearTimeout(startTimer);
     };
   }, [isCameraOpen, cleanUpStream]);
 
@@ -325,9 +328,21 @@ function MediaUploadZoneInner({
 
   const previewSrc = previewUrl ?? (storedValue && storedValue.startsWith("data:") ? storedValue : null);
 
+  // Render the fullscreen camera through a portal on <body>. Kept inline, the overlay
+  // lives inside whatever ancestor <AnimatePresence> this zone is nested under (e.g.
+  // Step2Profile's "სოციალურად დაუცველი"/"პენსიონერი" blocks, or the wizard's own
+  // step-swap presence). Opening/closing it would then mutate DOM inside a subtree that
+  // presence may simultaneously be animating out — the same insertBefore/Node race.
+  // The portal decouples it from every ancestor's managed subtree; it is still
+  // `position: fixed; inset: 0`, so it renders identically.
+  const cameraOverlayPortal =
+    cameraOverlay && typeof document !== "undefined"
+      ? createPortal(cameraOverlay, document.body)
+      : null;
+
   return (
     <>
-      {cameraOverlay}
+      {cameraOverlayPortal}
       <div className={cn("relative w-full", className)}>
       {/* Hidden file inputs — accept includes HEIC/HEIF for iPhone camera photos */}
       <input

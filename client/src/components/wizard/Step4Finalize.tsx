@@ -189,6 +189,17 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
   const [smsCode, setSmsCode] = useState("");
   const [smsError, setSmsError] = useState<string | null>(null);
 
+  // Every in-flight request here writes state that gates an <AnimatePresence> child
+  // (verificationResult, the SMS code box). Once the wizard's outer presence starts
+  // detaching this step, those writes must not land — see handleCancelSale below.
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
   // ─── Derived from formData — survives component re-mounts on back/forward nav ───
   const hasCaptured = !!data.receiptPhoto;
   const { dealer } = useDealerAuth();
@@ -245,15 +256,17 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
     setSmsError(null);
     try {
       await axios.post("/api/verification/send-sms", { phone: data.phone });
+      if (!isMountedRef.current) return;
       setIsSmsSent(true);
       toast({
         title: "SMS გაიგზავნა",
         description: "გთხოვთ შეიყვანოთ მიღებული კოდი",
       });
     } catch (err: any) {
+      if (!isMountedRef.current) return;
       setSmsError(err.response?.data?.message || "SMS-ის გაგზავნა ვერ მოხერხდა");
     } finally {
-      setIsSendingSms(false);
+      if (isMountedRef.current) setIsSendingSms(false);
     }
   };
 
@@ -266,15 +279,17 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
         phone: data.phone,
         code: smsCode
       });
+      if (!isMountedRef.current) return;
       updateData({ smsVerified: true }); // isSmsVerified is now derived from data.smsVerified
       toast({
         title: "წარმატება",
         description: "ტელეფონის ნომერი დადასტურებულია",
       });
     } catch (err: any) {
+      if (!isMountedRef.current) return;
       setSmsError(err.response?.data?.message || "არასწორი კოდი");
     } finally {
-      setIsVerifyingSms(false);
+      if (isMountedRef.current) setIsVerifyingSms(false);
     }
   };
 
@@ -315,6 +330,7 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
       }
 
       const result = await res.json();
+      if (!isMountedRef.current) return;
       const rawAmount = result?.total_amount;
 
       if (rawAmount === null || rawAmount === undefined) {
@@ -337,6 +353,7 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
         receiptVerificationMessage: message,
       }); // verificationResult is derived from data after isVerifying flips false
     } catch (err) {
+      if (!isMountedRef.current) return;
       console.error("[Receipt Verification] Error:", err);
       const message = "❌ ვერ მოხერხდა მონაცემების ამოკითხვა";
       updateData({
@@ -344,7 +361,7 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
         receiptVerificationMessage: message
       });
     } finally {
-      setIsVerifying(false);
+      if (isMountedRef.current) setIsVerifying(false);
     }
   };
 
@@ -356,8 +373,15 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
         title: "შეკვეთა გაუქმდა",
         description: "შეკვეთა გაუქმდა და კოდი ისევ ხელმისაწვდომია.",
       });
+      // Settle isCancelling BEFORE handing control to onCancelSale(), which resets the
+      // wizard to step 1 and starts this step's exit animation in the parent
+      // <AnimatePresence mode="wait">. Left to the finally block, the reset would land
+      // as a second render pass over a subtree the parent is already detaching.
+      setIsCancelling(false);
       onCancelSale();
+      return;
     } catch (err) {
+      if (!isMountedRef.current) return;
       console.error("[Cancel Sale] Error:", err);
       toast({
         title: "შეცდომა",
@@ -365,7 +389,8 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
         variant: "destructive",
       });
     } finally {
-      setIsCancelling(false);
+      // Still needed for the error path; idempotent after the success path above.
+      if (isMountedRef.current) setIsCancelling(false);
     }
   };
 
@@ -722,7 +747,7 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
         </Button>
 
         <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center gap-3">
-          <Button type="button" variant="outline" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onBack(); }} disabled={isSubmitting || isCancelling || isCompilingSignature} className="w-full sm:w-auto px-8 h-12 rounded-xl text-base">უკან</Button>
+          <Button type="button" variant="outline" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onBack(); }} disabled={isSubmitting || isCancelling || isCompilingSignature || isVerifying || isSendingSms || isVerifyingSms} className="w-full sm:w-auto px-8 h-12 rounded-xl text-base">უკან</Button>
           <Button
             type="button"
             onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleFinish(e); }}

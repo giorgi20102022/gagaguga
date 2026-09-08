@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { type SubmissionInput } from "@shared/routes";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,9 +25,30 @@ export function Step2DealerPersonalId({ data, updateData, onNext, onBack, onRest
   const [error, setError] = useState<string | null>(null);
   const [isAlreadyUsed, setIsAlreadyUsed] = useState(false);
   const verified = Boolean(data.dealerPersonalIdVerified);
+  // Cancellation guard: once this step starts unmounting (the parent
+  // <AnimatePresence mode="wait"> begins its exit), an in-flight lookup must not run
+  // any setState/updateData at all — a late isChecking/error/isAlreadyUsed flip would
+  // add or remove a child of this component's own <AnimatePresence> while the parent
+  // is detaching the same nodes, which crashes with insertBefore/Node.
+  const isMountedRef = useRef(true);
+  const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      abortRef.current?.abort();
+      abortRef.current = null;
+    };
+  }, []);
 
   const runLookup = async () => {
     if (!personalId || isChecking) return;
+
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const isCancelled = () => controller.signal.aborted || !isMountedRef.current;
 
     setIsChecking(true);
     setError(null);
@@ -47,8 +68,10 @@ export function Step2DealerPersonalId({ data, updateData, onNext, onBack, onRest
           lastName: String(data.lastName ?? "").trim(),
           mode: "check",
         },
-        { withCredentials: true, timeout: 130_000 },
+        { withCredentials: true, timeout: 130_000, signal: controller.signal },
       );
+
+      if (isCancelled()) return;
 
       const result = res.data as {
         success?: boolean;
@@ -76,6 +99,7 @@ export function Step2DealerPersonalId({ data, updateData, onNext, onBack, onRest
         }
       }
     } catch (err: unknown) {
+      if (isCancelled()) return;
       const errData = (err as { response?: { data?: { message?: string } } })?.response?.data;
       const msg =
         typeof errData?.message === "string" && errData.message
@@ -88,7 +112,8 @@ export function Step2DealerPersonalId({ data, updateData, onNext, onBack, onRest
         dealerPersonalIdLookupMessage: msg,
       });
     } finally {
-      setIsChecking(false);
+      if (abortRef.current === controller) abortRef.current = null;
+      if (!isCancelled()) setIsChecking(false);
     }
   };
 
@@ -234,7 +259,7 @@ export function Step2DealerPersonalId({ data, updateData, onNext, onBack, onRest
 
       <div className="pt-6 flex flex-col-reverse sm:flex-row sm:justify-between gap-3">
         {!isAlreadyUsed && (
-          <Button type="button" variant="outline" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onBack(); }} className="w-full sm:w-auto px-8 h-12 rounded-xl">
+          <Button type="button" variant="outline" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onBack(); }} disabled={isChecking} className="w-full sm:w-auto px-8 h-12 rounded-xl">
             უკან
           </Button>
         )}

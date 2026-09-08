@@ -22,6 +22,10 @@ export function useMediaUpload({ storedValue, onPersist, onFileReady, onError }:
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isPersisting, setIsPersisting] = useState(false);
   const objectUrlRef = useRef<string | null>(null);
+  // File processing outlives the zone when the user navigates mid-upload; local state
+  // must not be flipped afterwards, or the busy overlay would mount/unmount inside a
+  // subtree the wizard's <AnimatePresence> is already detaching.
+  const isMountedRef = useRef(true);
   const onPersistRef = useRef(onPersist);
   const onFileReadyRef = useRef(onFileReady);
   const onErrorRef = useRef(onError);
@@ -50,7 +54,11 @@ export function useMediaUpload({ storedValue, onPersist, onFileReady, onError }:
   }, [storedValue]);
 
   useEffect(() => {
-    return () => revokeObjectUrl(objectUrlRef.current);
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      revokeObjectUrl(objectUrlRef.current);
+    };
   }, []);
 
   const handleFile = useCallback(async (file: File) => {
@@ -82,7 +90,7 @@ export function useMediaUpload({ storedValue, onPersist, onFileReady, onError }:
       if (instantUrl) {
         revokeObjectUrl(objectUrlRef.current);
         objectUrlRef.current = instantUrl.startsWith("blob:") ? instantUrl : null;
-        setPreviewUrl(instantUrl);
+        if (isMountedRef.current) setPreviewUrl(instantUrl);
       }
 
       // 2. Prepare file & convert to base64 safely
@@ -93,6 +101,8 @@ export function useMediaUpload({ storedValue, onPersist, onFileReady, onError }:
         throw new Error("Base64 conversion produced empty string");
       }
 
+      // Always persisted, even after unmount — this writes to the wizard's formData
+      // (owned by the always-mounted dashboard), so skipping it would lose the upload.
       onPersistRef.current(base64);
     } catch (err) {
       console.error("File processing error in handleFile:", err);
@@ -100,7 +110,7 @@ export function useMediaUpload({ storedValue, onPersist, onFileReady, onError }:
       onErrorRef.current?.(msg);
       toast({ title: "შეცდომა", description: msg, variant: "destructive" });
     } finally {
-      setIsPersisting(false);
+      if (isMountedRef.current) setIsPersisting(false);
     }
   }, []);
 

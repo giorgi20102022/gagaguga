@@ -156,6 +156,27 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
 
   const [errors, setErrors] = useState<Record<string, boolean>>({});
 
+  // Verification requests can outlive this step (the "უკან" button, or the dashboard
+  // resetting the wizard). Any setState landing afterwards would add/remove children of
+  // the two <AnimatePresence> blocks below while the parent presence is detaching this
+  // subtree — the insertBefore/Node crash. Abort + guard instead.
+  const isMountedRef = useRef(true);
+  // One controller per verification — the two can be in flight at the same time, so a
+  // shared ref would let starting one cancel (and strand the spinner of) the other.
+  const socialAbortRef = useRef<AbortController | null>(null);
+  const pensionerAbortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      socialAbortRef.current?.abort();
+      socialAbortRef.current = null;
+      pensionerAbortRef.current?.abort();
+      pensionerAbortRef.current = null;
+    };
+  }, []);
+
   const persistSocial = useCallback((base64: string) => {
     updateData({ socialExtract: base64 });
     setErrors((prev) => ({ ...prev, socialExtract: false }));
@@ -203,6 +224,11 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
     setPensionerVerifyError(null);
     setIsPensionerVerified(false);
 
+    pensionerAbortRef.current?.abort();
+    const controller = new AbortController();
+    pensionerAbortRef.current = controller;
+    const isCancelled = () => controller.signal.aborted || !isMountedRef.current;
+
     try {
       // Compress the image before converting to base64 to avoid iOS memory crashes
       const compressedBlob = await compressBlob(pendingPensionerFile!);
@@ -216,7 +242,10 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
         idNumber: data.idNumber || "",
       }, {
         withCredentials: true,
+        signal: controller.signal,
       });
+
+      if (isCancelled()) return;
 
       const verified = res.data;
 
@@ -259,6 +288,7 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
         updateData({ pensioner: true });
       }
     } catch (err: unknown) {
+      if (isCancelled()) return;
       console.error("Client side failure (pensioner):", err);
       const errData = (err as any)?.response?.data;
       const georgianMsg = extractVisionApiError(errData);
@@ -269,9 +299,12 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
       setIsPensionerVerified(false);
       setPensionerVerifyError(msg);
     } finally {
-      setIsVerifyingPensioner(false);
-      // Reset pending file to allow immediate retry without page refresh
-      setPendingPensionerFile(null);
+      if (pensionerAbortRef.current === controller) pensionerAbortRef.current = null;
+      if (!isCancelled()) {
+        setIsVerifyingPensioner(false);
+        // Reset pending file to allow immediate retry without page refresh
+        setPendingPensionerFile(null);
+      }
     }
   };
 
@@ -281,6 +314,11 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
     setIsVerifyingSocial(true);
     setSocialVerifyError(null);
     setIsSocialVerified(false);
+
+    socialAbortRef.current?.abort();
+    const controller = new AbortController();
+    socialAbortRef.current = controller;
+    const isCancelled = () => controller.signal.aborted || !isMountedRef.current;
 
     try {
       // Compress the image before sending to avoid iOS memory crashes
@@ -297,7 +335,10 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
         headers: {
           "Content-Type": "multipart/form-data",
         },
+        signal: controller.signal,
       });
+
+      if (isCancelled()) return;
 
       const verified = res.data;
 
@@ -369,6 +410,7 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
       setIsSocialVerified(true);
       setSocialVerifyError(null);
     } catch (err: unknown) {
+      if (isCancelled()) return;
       console.error("Client side failure (social):", err);
       const errData = (err as any)?.response?.data;
       const genericError = getErrorMessage(errData);
@@ -380,9 +422,12 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
       setIsSocialVerified(false);
       setSocialVerifyError(msg);
     } finally {
-      setIsVerifyingSocial(false);
-      // Reset pending file to allow immediate retry without page refresh
-      setPendingSocialFile(null);
+      if (socialAbortRef.current === controller) socialAbortRef.current = null;
+      if (!isCancelled()) {
+        setIsVerifyingSocial(false);
+        // Reset pending file to allow immediate retry without page refresh
+        setPendingSocialFile(null);
+      }
     }
   };
 
@@ -685,7 +730,7 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
       </div>
 
       <div className="pt-6 flex flex-col-reverse sm:flex-row sm:justify-between gap-3">
-        <Button type="button" variant="outline" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onBack(); }} className="w-full sm:w-auto px-8 h-12 rounded-xl text-base">უკან</Button>
+        <Button type="button" variant="outline" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onBack(); }} disabled={isVerifyingSocial || isVerifyingPensioner} className="w-full sm:w-auto px-8 h-12 rounded-xl text-base">უკან</Button>
         <Button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleNext(); }} disabled={isNextDisabled} className="w-full sm:w-auto px-8 h-12 rounded-xl text-base shadow-md">გაგრძელება</Button>
       </div>
 

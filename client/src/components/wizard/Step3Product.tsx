@@ -46,6 +46,18 @@ export function Step3ProductInner({ data, updateData, onNext, onBack, dealerKey:
   const [verifiedProductName, setVerifiedProductName] = useState<string | null>(() => data?.verifiedProductName || null);
   const [ovenCode, setOvenCode] = useState(() => data?.ovenCode || (isGorgiaUser ? String(data?.supplierId || "") : ""));
 
+  // Guards async state updates so an in-flight code check or product fetch can never
+  // re-render this step after the wizard's <AnimatePresence> has begun detaching it —
+  // that second DOM-mutation pass over the same nodes is what crashes insertBefore.
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
   // Dynamic delivery fee is now used from the database
 
   // Auto-fill supplierName from dealer session name (read-only source of truth)
@@ -56,22 +68,34 @@ export function Step3ProductInner({ data, updateData, onNext, onBack, dealerKey:
   }, [dealerName, data.supplierName]);
 
   useEffect(() => {
+    let cancelled = false;
+    const controller = new AbortController();
+
     const fetchProducts = async () => {
       try {
-        const res = await fetch(`/api/products?dealer=${resolvedDealerKey}`);
+        const res = await fetch(`/api/products?dealer=${resolvedDealerKey}`, {
+          signal: controller.signal,
+        });
         if (!res.ok) throw new Error("Failed to fetch products");
         const data = await res.json();
+        if (cancelled) return;
         setProducts(data);
       } catch (err) {
+        if (cancelled) return;
         console.error("Error fetching products:", err);
       } finally {
-        setIsLoading(false);
+        if (!cancelled) setIsLoading(false);
       }
     };
 
     if (active !== false) {
       fetchProducts();
     }
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
   }, [resolvedDealerKey, active]);
 
   const handleVerifyOvenCode = async () => {
@@ -109,6 +133,8 @@ export function Step3ProductInner({ data, updateData, onNext, onBack, dealerKey:
         dealer_name: dealerNameToSend,
         branch_name: dealerNameToSend,
       });
+
+      if (!isMountedRef.current) return;
 
       if (result?.status === "success") {
         const message = result.message || "კოდი ვალიდურია";
@@ -175,6 +201,7 @@ export function Step3ProductInner({ data, updateData, onNext, onBack, dealerKey:
         });
       }
     } catch (err: any) {
+      if (!isMountedRef.current) return;
       console.error("[Oven Verification] Native Error:", {
         name: err?.name,
         message: err?.message,
@@ -210,7 +237,7 @@ export function Step3ProductInner({ data, updateData, onNext, onBack, dealerKey:
         variant: "destructive",
       });
     } finally {
-      setIsVerifyingOven(false);
+      if (isMountedRef.current) setIsVerifyingOven(false);
     }
   };
 
@@ -629,7 +656,7 @@ export function Step3ProductInner({ data, updateData, onNext, onBack, dealerKey:
       )}
 
       <div className="pt-6 flex flex-col-reverse sm:flex-row sm:justify-between gap-3">
-        <Button type="button" variant="outline" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onBack(); }} className="w-full sm:w-auto px-8 h-12 rounded-xl text-base">უკან</Button>
+        <Button type="button" variant="outline" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onBack(); }} disabled={isVerifyingOven} className="w-full sm:w-auto px-8 h-12 rounded-xl text-base">უკან</Button>
         <Button 
           type="button"
           onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleNext(); }}
