@@ -254,6 +254,7 @@ export default function DealerDashboard() {
         const res = await axios.get(`/api/submission-status/${submissionId}`);
         if (cancelled) return;
         const { status, message, queuePosition } = res.data ?? {};
+        console.log("[Submit] Queue poll:", { submissionId, status, queuePosition });
 
         if (status === "success") {
           clearPendingSubmissionId();
@@ -290,11 +291,13 @@ export default function DealerDashboard() {
     // Poll once straight away, then on the worker's own cadence. The immediate call is
     // what fills in the position for a submission restored from localStorage, which has
     // no cached position to show.
+    console.log("[Submit] Queue polling started for", submissionId);
     void poll();
     const interval = setInterval(poll, 60000);
     return () => {
       cancelled = true;
       clearInterval(interval);
+      console.log("[Submit] Queue polling stopped for", submissionId);
     };
   }, [queuedSubmission?.submissionId, finishSubmissionSuccess, finishSubmissionError]);
 
@@ -532,16 +535,39 @@ export default function DealerDashboard() {
         throw err;
       }
 
-      if ((response.status === 202 || responseData?.queued === true) && responseData?.submissionId) {
+      // A queued response is NEVER terminal. Classify it first and return on every
+      // branch, so no shape of 202 can fall through to the success modal below.
+      const isQueuedResponse = response.status === 202 || responseData?.queued === true;
+
+      if (isQueuedResponse) {
+        const queuedId = typeof responseData?.submissionId === "string" ? responseData.submissionId : null;
+        console.log("[Submit] Server queued this submission:", {
+          httpStatus: response.status,
+          submissionId: queuedId,
+          queuePosition: responseData?.queuePosition,
+        });
+
+        if (!queuedId) {
+          // Queued but untrackable (body missing or unparseable). Showing the success
+          // modal here would tell the dealer to hand over the stove for a submission that
+          // is still waiting and could still fail — and telling them it failed would make
+          // them re-submit a duplicate. Say exactly what is true instead.
+          console.error("[Submit] Queued response carried no submissionId; cannot track:", responseData);
+          finishSubmissionError(
+            "განაცხადი რიგშია, მაგრამ სტატუსის თვალყურის დევნება ვერ ხერხდება. გთხოვთ, ნუ გააგზავნით ხელახლა და დაუკავშირდით ადმინისტრატორს.",
+          );
+          return;
+        }
+
         // The server put this in its retry queue. Stay on this step, show the position,
         // and let the poll effect above deliver the real outcome — the old code raced a
         // flat 120s timeout here and reported "Timeout" for submissions that were still
         // queued and would go on to succeed.
         // Persist first: if the tab dies before the next render, the id is what lets the
         // next page life resume this submission instead of the dealer re-submitting.
-        writePendingSubmissionId(responseData.submissionId);
+        writePendingSubmissionId(queuedId);
         setQueuedSubmission({
-          submissionId: responseData.submissionId,
+          submissionId: queuedId,
           queuePosition: Number(responseData.queuePosition) || 0,
         });
         setErrorMessage('');
@@ -734,10 +760,12 @@ export default function DealerDashboard() {
                   <div className="space-y-2">
                     <h3 className="text-2xl font-bold text-amber-600 dark:text-amber-400">რიგშია — დამუშავდება მალე</h3>
                     <p className="text-muted-foreground font-medium text-lg leading-relaxed">
+                      {/* queuePosition is this item's own 1-based slot, so the number of
+                          submissions ahead of it is one less. */}
                       {queuedSubmission!.queuePosition === null
                         ? "მიმდინარეობს სტატუსის შემოწმება..."
-                        : queuedSubmission!.queuePosition > 0
-                        ? `თქვენს წინ არის ${queuedSubmission!.queuePosition} განაცხადი`
+                        : queuedSubmission!.queuePosition > 1
+                        ? `თქვენს წინ არის ${queuedSubmission!.queuePosition - 1} განაცხადი`
                         : "თქვენი განაცხადი მუშავდება"}
                     </p>
                     <p className="text-sm text-muted-foreground/80">
