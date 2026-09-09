@@ -2131,6 +2131,11 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
       message: entry.message,
       data: entry.data,
       queuePosition,
+      // Lets the client tell "still waiting in retryQueue" from "sent to n8n, awaiting
+      // its reply" while status is equally "pending" for both. Sourced from the single
+      // dispatchedAt marker set at the executeWebhookSubmission call sites — no second
+      // source of truth for this.
+      dispatched: wasSubmissionDispatched(submissionId),
     });
   });
 

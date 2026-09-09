@@ -171,7 +171,10 @@ export default function DealerDashboard() {
       // back and hand it to the same poll effect the live flow uses. Nothing about the
       // wizard is restored or re-triggered — this only resurrects the status view.
       writePendingSubmissionId(pendingSubmissionId);
-      setQueuedSubmission({ submissionId: pendingSubmissionId, queuePosition: null });
+      // Both fields are unknown until the effect's immediate first poll answers; it
+      // corrects them (or jumps straight to success/error) within a few hundred ms, so
+      // the restored view settles on whichever state is actually current.
+      setPendingSubmission({ submissionId: pendingSubmissionId, queuePosition: null, dispatched: false });
     }
   }, []);
 
@@ -196,17 +199,34 @@ export default function DealerDashboard() {
 
   const [isStatusModalOpen, setIsStatusModalOpen] = useState(false);
   const [submissionStatus, setSubmissionStatus] = useState<'success' | 'error' | null>(null);
-  // Set when the server answers 202/queued: the submission is safely in the server-side
-  // retry queue and we poll for its real outcome instead of showing a false timeout.
-  // queuePosition is null until the first poll answers — the case when this is restored
-  // from localStorage after a reload, where no position was cached.
-  const [queuedSubmission, setQueuedSubmission] = useState<{ submissionId: string; queuePosition: number | null } | null>(null);
+  // Set when the server answers 202/queued: the submission is tracked server-side and we
+  // poll for its real outcome. `dispatched` distinguishes "still in retryQueue" from
+  // "sent to n8n, awaiting reply"; queuePosition is null until the first poll answers,
+  // which is the case when this is restored from localStorage after a reload.
+  const [pendingSubmission, setPendingSubmission] = useState<
+    { submissionId: string; queuePosition: number | null; dispatched: boolean } | null
+  >(null);
 
-  // The status modal shows three variants out of one container. Being queued opens it on
-  // its own; a terminal result then takes precedence over the queued variant, so the
-  // content swaps in place while the container stays mounted the whole time.
-  const isQueuedModal = !!queuedSubmission && !submissionStatus;
-  const isStatusModalVisible = isStatusModalOpen || !!queuedSubmission;
+  // Single source of truth for which variant the shared modal shell renders. Derived, so
+  // the states can never contradict each other the way separate booleans could.
+  // A terminal result always wins; otherwise an in-flight request or a dispatched
+  // submission is "processing", and only an undispatched queued one is "queued".
+  type ModalView = 'processing' | 'queued' | 'success' | 'error';
+  const modalView: ModalView | null =
+    submissionStatus === 'success'
+      ? 'success'
+      : submissionStatus === 'error'
+      ? 'error'
+      : isSubmitting
+      ? 'processing'
+      : pendingSubmission
+      ? (pendingSubmission.dispatched ? 'processing' : 'queued')
+      : null;
+
+  // Processing and queued are not dismissable: the request is already with the server, so
+  // closing would only make the app forget about something still in progress.
+  const isModalDismissable = modalView === 'success' || modalView === 'error';
+  const isStatusModalVisible = isStatusModalOpen || modalView !== null;
 
   // Both the immediate (Scenario A) and the queued (Scenario B) paths end here, so the
   // dealer sees exactly the same success / error UI either way.
@@ -244,8 +264,9 @@ export default function DealerDashboard() {
   // Poll the queued submission's real status. The server-side worker re-checks its
   // collision window once a minute, so nothing can change faster than that.
   useEffect(() => {
-    const submissionId = queuedSubmission?.submissionId;
+    const submissionId = pendingSubmission?.submissionId;
     if (!submissionId) return;
+    const isDispatched = !!pendingSubmission?.dispatched;
 
     let cancelled = false;
 
@@ -253,23 +274,29 @@ export default function DealerDashboard() {
       try {
         const res = await axios.get(`/api/submission-status/${submissionId}`);
         if (cancelled) return;
-        const { status, message, queuePosition } = res.data ?? {};
-        console.log("[Submit] Queue poll:", { submissionId, status, queuePosition });
+        const { status, message, queuePosition, dispatched } = res.data ?? {};
+        console.log("[Submit] Queue poll:", { submissionId, status, queuePosition, dispatched });
 
         if (status === "success") {
           clearPendingSubmissionId();
-          // Settle the terminal state BEFORE dropping queuedSubmission. Clearing it first
+          // Settle the terminal state BEFORE dropping pendingSubmission. Clearing it first
           // would close the modal (nothing keeps it open until finishSubmissionSuccess
           // gets past its await), and the dealer would see it blink out and reopen.
           await finishSubmissionSuccess();
-          setQueuedSubmission(null);
+          setPendingSubmission(null);
         } else if (status === "failed") {
           clearPendingSubmissionId();
           finishSubmissionError(message || "განაცხადის დამუშავება ვერ მოხერხდა");
-          setQueuedSubmission(null);
-        } else if (typeof queuePosition === "number") {
-          setQueuedSubmission((prev) =>
-            prev && prev.queuePosition !== queuePosition ? { ...prev, queuePosition } : prev,
+          setPendingSubmission(null);
+        } else {
+          // Still pending. Carry both the live position and the dispatch flag — the flag
+          // flipping is what moves the modal from "queued" to "processing" in place.
+          const nextPosition = typeof queuePosition === "number" ? queuePosition : null;
+          const nextDispatched = !!dispatched;
+          setPendingSubmission((prev) =>
+            prev && (prev.queuePosition !== nextPosition || prev.dispatched !== nextDispatched)
+              ? { ...prev, queuePosition: nextPosition, dispatched: nextDispatched }
+              : prev,
           );
         }
       } catch (err) {
@@ -280,7 +307,7 @@ export default function DealerDashboard() {
           // id — there is nothing left to resume on a future visit.
           clearPendingSubmissionId();
           finishSubmissionError("განაცხადის სტატუსი ვერ მოიძებნა. გთხოვთ, დაუკავშირდეთ ადმინისტრატორს.");
-          setQueuedSubmission(null);
+          setPendingSubmission(null);
           return;
         }
         // A transient network/poll error is not a failed submission — keep waiting.
@@ -291,15 +318,19 @@ export default function DealerDashboard() {
     // Poll once straight away, then on the worker's own cadence. The immediate call is
     // what fills in the position for a submission restored from localStorage, which has
     // no cached position to show.
-    console.log("[Submit] Queue polling started for", submissionId);
+    // While queued, nothing can change faster than the worker's own 1-minute cadence.
+    // Once dispatched, n8n replies in ~30s, so poll faster to land the result promptly
+    // instead of leaving "processing" up for as much as a minute after it finished.
+    const intervalMs = isDispatched ? 10000 : 60000;
+    console.log("[Submit] Queue polling started for", submissionId, { isDispatched, intervalMs });
     void poll();
-    const interval = setInterval(poll, 60000);
+    const interval = setInterval(poll, intervalMs);
     return () => {
       cancelled = true;
       clearInterval(interval);
       console.log("[Submit] Queue polling stopped for", submissionId);
     };
-  }, [queuedSubmission?.submissionId, finishSubmissionSuccess, finishSubmissionError]);
+  }, [pendingSubmission?.submissionId, pendingSubmission?.dispatched, finishSubmissionSuccess, finishSubmissionError]);
 
   useEffect(() => {
     if (isStatusModalVisible) {
@@ -566,9 +597,11 @@ export default function DealerDashboard() {
         // Persist first: if the tab dies before the next render, the id is what lets the
         // next page life resume this submission instead of the dealer re-submitting.
         writePendingSubmissionId(queuedId);
-        setQueuedSubmission({
+        setPendingSubmission({
           submissionId: queuedId,
           queuePosition: Number(responseData.queuePosition) || 0,
+          // A 202 means it went into retryQueue, so it is by definition not yet dispatched.
+          dispatched: false,
         });
         setErrorMessage('');
         return;
@@ -607,7 +640,7 @@ export default function DealerDashboard() {
   const cancelSale = async () => {
     // Cancelling the sale in progress must not discard an unrelated submission that is
     // still queued from an earlier run — carry its id across the blanket clear.
-    const pendingSubmissionId = queuedSubmission ? readPendingSubmissionId() : null;
+    const pendingSubmissionId = pendingSubmission ? readPendingSubmissionId() : null;
 
     try { localStorage.clear(); } catch { /* ignore */ }
     try { sessionStorage.clear(); } catch { /* ignore */ }
@@ -717,7 +750,7 @@ export default function DealerDashboard() {
                   <Step3Product key="step3" data={formData} updateData={updateData} onNext={nextStep} onBack={prevStep} dealerKey={dealer.key} dealerName={dealer.name} active={step === 4} />
                 )}
                 {step === 5 && (
-                  <Step4Finalize key="step4" data={formData} updateData={updateData} onSubmit={handleSubmit} onBack={prevStep} isSubmitting={isSubmitting} onCancelSale={cancelSale} active={step === 5} requireSmsVerification={dealer?.requireSmsVerification} queuedSubmission={queuedSubmission} />
+                  <Step4Finalize key="step4" data={formData} updateData={updateData} onSubmit={handleSubmit} onBack={prevStep} isSubmitting={isSubmitting} onCancelSale={cancelSale} active={step === 5} requireSmsVerification={dealer?.requireSmsVerification} isPendingSubmission={!!pendingSubmission} />
                 )}
               </AnimatePresence>
             </ErrorBoundary>
@@ -725,15 +758,15 @@ export default function DealerDashboard() {
         </div>
       </main>
 
-      {/* Queued / Success / Error Post-Submission Status Modal.
-          One container for all three states, so a queued submission resolving swaps this
-          modal's content in place rather than closing one modal and opening another. */}
+      {/* Processing / Queued / Success / Error Submission Status Modal.
+          One container for all four states, so a submission moving queued → processing →
+          result swaps this modal's content in place rather than closing and reopening. */}
       {isStatusModalVisible && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-[100] flex items-center justify-center p-4">
           <div className="bg-card border border-white/10 rounded-3xl p-8 max-w-md w-full relative shadow-2xl animate-in zoom-in-95 duration-200">
-            {/* No dismiss while queued: the submission is already with the server and
-                being tracked, so closing would only lose the dealer's view of it. */}
-            {!isQueuedModal && (
+            {/* No dismiss while processing or queued: the submission is already with the
+                server and being tracked, so closing would only lose sight of it. */}
+            {isModalDismissable && (
               <button
                 onClick={() => {
                   setIsStatusModalOpen(false);
@@ -752,21 +785,36 @@ export default function DealerDashboard() {
               </button>
             )}
             <div className="flex flex-col items-center text-center gap-6 mt-2">
-              {isQueuedModal ? (
+              {modalView === 'processing' ? (
+                <>
+                  <div className="h-20 w-20 bg-primary/10 text-primary rounded-full flex items-center justify-center">
+                    <Loader2 className="h-10 w-10 animate-spin" />
+                  </div>
+                  <div className="space-y-2">
+                    <h3 className="text-2xl font-bold text-foreground">მონაცემთა დამუშავება მიმდინარეობს</h3>
+                    <p className="text-muted-foreground font-medium text-lg leading-relaxed">
+                      გთხოვთ მოიცადოთ
+                    </p>
+                    <p className="text-sm text-muted-foreground/80">
+                      გთხოვთ, არ დახუროთ გვერდი — შედეგი ავტომატურად გამოჩნდება.
+                    </p>
+                  </div>
+                </>
+              ) : modalView === 'queued' ? (
                 <>
                   <div className="h-20 w-20 bg-amber-500/10 text-amber-500 rounded-full flex items-center justify-center animate-pulse">
                     <Clock className="h-10 w-10" />
                   </div>
                   <div className="space-y-2">
-                    <h3 className="text-2xl font-bold text-amber-600 dark:text-amber-400">რიგშია — დამუშავდება მალე</h3>
+                    <h3 className="text-2xl font-bold text-amber-600 dark:text-amber-400">
+                      {typeof pendingSubmission?.queuePosition === "number" && pendingSubmission.queuePosition > 0
+                        ? `თქვენი განაცხადი რიგშია ${pendingSubmission.queuePosition}`
+                        : "თქვენი განაცხადი რიგშია"}
+                    </h3>
                     <p className="text-muted-foreground font-medium text-lg leading-relaxed">
-                      {/* queuePosition is this item's own 1-based slot, so the number of
-                          submissions ahead of it is one less. */}
-                      {queuedSubmission!.queuePosition === null
+                      {pendingSubmission?.queuePosition === null
                         ? "მიმდინარეობს სტატუსის შემოწმება..."
-                        : queuedSubmission!.queuePosition > 1
-                        ? `თქვენს წინ არის ${queuedSubmission!.queuePosition - 1} განაცხადი`
-                        : "თქვენი განაცხადი მუშავდება"}
+                        : "გთხოვთ მოიცადოთ"}
                     </p>
                     <p className="text-sm text-muted-foreground/80">
                       გთხოვთ, არ დახუროთ გვერდი — შედეგი ავტომატურად გამოჩნდება.
@@ -807,7 +855,7 @@ export default function DealerDashboard() {
                   </div>
                 </>
               )}
-              {!isQueuedModal && (
+              {isModalDismissable && (
                 <Button
                   onClick={() => {
                     setIsStatusModalOpen(false);

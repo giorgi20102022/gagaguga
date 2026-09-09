@@ -170,10 +170,12 @@ interface Props {
   active?: boolean;
   requireSmsVerification?: boolean;
   /** Set once the server accepted this submission into its retry queue (HTTP 202). */
-  queuedSubmission?: { submissionId: string; queuePosition: number | null } | null;
+  /** True while a submission is tracked server-side (queued or dispatched). The status
+   *  modal covers the screen in that case; this just keeps the actions inert underneath. */
+  isPendingSubmission?: boolean;
 }
 
-export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmitting, loadingMessage, onCancelSale, active, requireSmsVerification, queuedSubmission }: Props) {
+export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmitting, loadingMessage, onCancelSale, active, requireSmsVerification, isPendingSubmission }: Props) {
   const { toast } = useToast();
   const [isVerifying, setIsVerifying] = useState(false);
   const [errors, setErrors] = useState<Record<string, boolean>>({});
@@ -432,7 +434,7 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
     data.cityDistrict && data.addressVillage && data.addressVillage.trim() !== ""
   );
 
-  const isQueued = !!queuedSubmission;
+  const isQueued = !!isPendingSubmission;
 
   const isSubmitDisabled =
     isSubmitting ||
@@ -760,7 +762,7 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
             className="w-full sm:w-auto px-10 h-12 rounded-xl text-base font-bold shadow-lg shadow-primary/25 hover:-translate-y-0.5 transition-all"
           >
             {isQueued
-              ? "რიგშია — დამუშავდება მალე"
+              ? "მონაცემთა დამუშავება მიმდინარეობს"
               : isSubmitting || isCompilingSignature
               ? (loadingMessage || "მონაცემები მოწმდება...")
               : "განაცხადის გაგზავნა"}
