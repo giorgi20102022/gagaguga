@@ -202,6 +202,12 @@ export default function DealerDashboard() {
   // from localStorage after a reload, where no position was cached.
   const [queuedSubmission, setQueuedSubmission] = useState<{ submissionId: string; queuePosition: number | null } | null>(null);
 
+  // The status modal shows three variants out of one container. Being queued opens it on
+  // its own; a terminal result then takes precedence over the queued variant, so the
+  // content swaps in place while the container stays mounted the whole time.
+  const isQueuedModal = !!queuedSubmission && !submissionStatus;
+  const isStatusModalVisible = isStatusModalOpen || !!queuedSubmission;
+
   // Both the immediate (Scenario A) and the queued (Scenario B) paths end here, so the
   // dealer sees exactly the same success / error UI either way.
   const finishSubmissionSuccess = useCallback(async () => {
@@ -251,12 +257,15 @@ export default function DealerDashboard() {
 
         if (status === "success") {
           clearPendingSubmissionId();
-          setQueuedSubmission(null);
+          // Settle the terminal state BEFORE dropping queuedSubmission. Clearing it first
+          // would close the modal (nothing keeps it open until finishSubmissionSuccess
+          // gets past its await), and the dealer would see it blink out and reopen.
           await finishSubmissionSuccess();
+          setQueuedSubmission(null);
         } else if (status === "failed") {
           clearPendingSubmissionId();
-          setQueuedSubmission(null);
           finishSubmissionError(message || "განაცხადის დამუშავება ვერ მოხერხდა");
+          setQueuedSubmission(null);
         } else if (typeof queuePosition === "number") {
           setQueuedSubmission((prev) =>
             prev && prev.queuePosition !== queuePosition ? { ...prev, queuePosition } : prev,
@@ -269,8 +278,8 @@ export default function DealerDashboard() {
           // in-memory queue). Say so rather than spinning forever, and drop the persisted
           // id — there is nothing left to resume on a future visit.
           clearPendingSubmissionId();
-          setQueuedSubmission(null);
           finishSubmissionError("განაცხადის სტატუსი ვერ მოიძებნა. გთხოვთ, დაუკავშირდეთ ადმინისტრატორს.");
+          setQueuedSubmission(null);
           return;
         }
         // A transient network/poll error is not a failed submission — keep waiting.
@@ -290,7 +299,7 @@ export default function DealerDashboard() {
   }, [queuedSubmission?.submissionId, finishSubmissionSuccess, finishSubmissionError]);
 
   useEffect(() => {
-    if (isStatusModalOpen) {
+    if (isStatusModalVisible) {
       document.body.style.overflow = "hidden";
     } else {
       document.body.style.overflow = "";
@@ -298,7 +307,7 @@ export default function DealerDashboard() {
     return () => {
       document.body.style.overflow = "";
     };
-  }, [isStatusModalOpen]);
+  }, [isStatusModalVisible]);
 
 
 
@@ -660,25 +669,6 @@ export default function DealerDashboard() {
             </div>
           )}
 
-          {/* Queued banner at dashboard level. Step4Finalize renders its own while the
-              dealer is still on step 5 in the live flow; this one covers the restored
-              case, where the wizard has reset to step 1 and that banner is not mounted. */}
-          {queuedSubmission && step !== 5 && (
-            <div className="mb-4 p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-start gap-3">
-              <Clock className="w-5 h-5 text-amber-600 mt-0.5 shrink-0 animate-pulse" />
-              <div>
-                <h4 className="font-semibold text-amber-700 dark:text-amber-400">რიგშია — დამუშავდება მალე</h4>
-                <p className="text-sm text-amber-700/80 dark:text-amber-400/80">
-                  {queuedSubmission.queuePosition === null
-                    ? "მიმდინარეობს სტატუსის შემოწმება..."
-                    : queuedSubmission.queuePosition > 0
-                    ? `თქვენს წინ არის ${queuedSubmission.queuePosition} განაცხადი. გთხოვთ, არ დახუროთ გვერდი.`
-                    : "თქვენი განაცხადი მუშავდება. გთხოვთ, არ დახუროთ გვერდი."}
-                </p>
-              </div>
-            </div>
-          )}
-
           <StepIndicator currentStep={step} />
 
           <div className="mt-8 relative min-h-[400px]">
@@ -709,28 +699,53 @@ export default function DealerDashboard() {
         </div>
       </main>
 
-      {/* Success/Error Post-Submission Status Modal */}
-      {isStatusModalOpen && (
+      {/* Queued / Success / Error Post-Submission Status Modal.
+          One container for all three states, so a queued submission resolving swaps this
+          modal's content in place rather than closing one modal and opening another. */}
+      {isStatusModalVisible && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-[100] flex items-center justify-center p-4">
           <div className="bg-card border border-white/10 rounded-3xl p-8 max-w-md w-full relative shadow-2xl animate-in zoom-in-95 duration-200">
-            <button
-              onClick={() => {
-                setIsStatusModalOpen(false);
-                if (submissionStatus === 'success') {
-                  setFormData({});
-                  setStep(1);
-                }
-                setSubmissionStatus(null);
-              }}
-              className="absolute top-4 right-4 p-2 rounded-full hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-              aria-label="Close"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
+            {/* No dismiss while queued: the submission is already with the server and
+                being tracked, so closing would only lose the dealer's view of it. */}
+            {!isQueuedModal && (
+              <button
+                onClick={() => {
+                  setIsStatusModalOpen(false);
+                  if (submissionStatus === 'success') {
+                    setFormData({});
+                    setStep(1);
+                  }
+                  setSubmissionStatus(null);
+                }}
+                className="absolute top-4 right-4 p-2 rounded-full hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                aria-label="Close"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )}
             <div className="flex flex-col items-center text-center gap-6 mt-2">
-              {submissionStatus === 'success' ? (
+              {isQueuedModal ? (
+                <>
+                  <div className="h-20 w-20 bg-amber-500/10 text-amber-500 rounded-full flex items-center justify-center animate-pulse">
+                    <Clock className="h-10 w-10" />
+                  </div>
+                  <div className="space-y-2">
+                    <h3 className="text-2xl font-bold text-amber-600 dark:text-amber-400">რიგშია — დამუშავდება მალე</h3>
+                    <p className="text-muted-foreground font-medium text-lg leading-relaxed">
+                      {queuedSubmission!.queuePosition === null
+                        ? "მიმდინარეობს სტატუსის შემოწმება..."
+                        : queuedSubmission!.queuePosition > 0
+                        ? `თქვენს წინ არის ${queuedSubmission!.queuePosition} განაცხადი`
+                        : "თქვენი განაცხადი მუშავდება"}
+                    </p>
+                    <p className="text-sm text-muted-foreground/80">
+                      გთხოვთ, არ დახუროთ გვერდი — შედეგი ავტომატურად გამოჩნდება.
+                    </p>
+                  </div>
+                </>
+              ) : submissionStatus === 'success' ? (
                 <>
                   <div className="h-20 w-20 bg-emerald-500/10 text-emerald-500 rounded-full flex items-center justify-center animate-bounce">
                     <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
@@ -764,19 +779,21 @@ export default function DealerDashboard() {
                   </div>
                 </>
               )}
-              <Button
-                onClick={() => {
-                  setIsStatusModalOpen(false);
-                  if (submissionStatus === 'success') {
-                    setFormData({});
-                    setStep(1);
-                  }
-                  setSubmissionStatus(null);
-                }}
-                className="w-full h-12 rounded-xl text-base font-bold mt-4"
-              >
-                დახურვა
-              </Button>
+              {!isQueuedModal && (
+                <Button
+                  onClick={() => {
+                    setIsStatusModalOpen(false);
+                    if (submissionStatus === 'success') {
+                      setFormData({});
+                      setStep(1);
+                    }
+                    setSubmissionStatus(null);
+                  }}
+                  className="w-full h-12 rounded-xl text-base font-bold mt-4"
+                >
+                  დახურვა
+                </Button>
+              )}
             </div>
           </div>
         </div>

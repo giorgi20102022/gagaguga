@@ -155,6 +155,14 @@ function withFinalPayableFields(finalPayable: number) {
   };
 }
 
+// Minimum gap required between two submissions reaching the shared n8n webhook, to keep
+// concurrent Google Sheets writes across dealer branches from colliding. Production n8n
+// execution data over ten consecutive real submissions put actual processing at
+// 29.9s–37.3s, so a 60s window clears the slowest observed run with ~23s of margin.
+// Read by every place that decides "is it safe to send now?" — keep it the single source
+// of truth so the checks can never drift apart.
+const SUBMISSION_COLLISION_WINDOW_MS = 60 * 1000;
+
 // Globally accessible timestamp for the last successful execution
 let last_processed_at: number = 0;
 
@@ -336,7 +344,7 @@ async function processRetryQueue() {
     const elapsed = last_processed_at ? now - last_processed_at : Infinity;
 
     // Check Scenario A (Safe Zone) for the queued item
-    if (elapsed > 2 * 60 * 1000 && !submissionProcessing) {
+    if (elapsed > SUBMISSION_COLLISION_WINDOW_MS && !submissionProcessing) {
       submissionProcessing = true;
       try {
         console.log(`[Queue Worker] Safe Zone reached. Processing item. Elapsed: ${elapsed === Infinity ? 'Infinity' : Math.round(elapsed / 1000) + 's'}`);
@@ -403,7 +411,7 @@ async function handleSubmission(item: { payload: any; resolve: (v: any) => void;
   const elapsed = last_processed_at ? now - last_processed_at : Infinity;
 
   // Process immediately if safe zone matches and retryQueue is empty (to preserve FIFO order)
-  if (elapsed > 2 * 60 * 1000 && !submissionProcessing && retryQueue.length === 0) {
+  if (elapsed > SUBMISSION_COLLISION_WINDOW_MS && !submissionProcessing && retryQueue.length === 0) {
     submissionProcessing = true;
     try {
       console.log(`[Queue] Scenario A (Safe Zone): Processing payload immediately. Elapsed since last: ${elapsed === Infinity ? 'Infinity' : Math.round(elapsed / 1000) + 's'}`);
@@ -1953,7 +1961,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
       // between, so this cannot drift.
       const elapsedSinceLastProcessed = last_processed_at ? Date.now() - last_processed_at : Infinity;
       const willProcessImmediately =
-        elapsedSinceLastProcessed > 2 * 60 * 1000 && !submissionProcessing && retryQueue.length === 0;
+        elapsedSinceLastProcessed > SUBMISSION_COLLISION_WINDOW_MS && !submissionProcessing && retryQueue.length === 0;
 
       if (!willProcessImmediately) {
         // Scenario B: the queue worker holds this for at least a minute, often much longer

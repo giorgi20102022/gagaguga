@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
-import { Camera, CheckCircle2, ShieldCheck, MapPin, ScanLine, AlertCircle, XCircle, Check, ChevronsUpDown, Clock } from "lucide-react";
+import { Camera, CheckCircle2, ShieldCheck, MapPin, ScanLine, AlertCircle, XCircle, Check, ChevronsUpDown } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { sendN8NRequest } from "@/lib/api";
 import axios from "axios";
@@ -729,24 +729,6 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
           </div>
         </div>
       </div>
-
-      {/* Queued (server Scenario B): the submission is safely in the server's retry queue
-          and its real result arrives via polling. Distinct from loading/success/error. */}
-      {isQueued && (
-        <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-start gap-3">
-          <Clock className="w-5 h-5 text-amber-600 mt-0.5 shrink-0 animate-pulse" />
-          <div>
-            <h4 className="font-semibold text-amber-700 dark:text-amber-400">რიგშია — დამუშავდება მალე</h4>
-            <p className="text-sm text-amber-700/80 dark:text-amber-400/80">
-              {queuedSubmission!.queuePosition === null
-                ? "მიმდინარეობს სტატუსის შემოწმება..."
-                : queuedSubmission!.queuePosition > 0
-                ? `თქვენს წინ არის ${queuedSubmission!.queuePosition} განაცხადი. გთხოვთ, არ დახუროთ გვერდი.`
-                : "თქვენი განაცხადი მუშავდება. გთხოვთ, არ დახუროთ გვერდი."}
-            </p>
-          </div>
-        </div>
-      )}
 
       <div className="pt-6 flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-4 border-t border-border mt-8">
         <Button
