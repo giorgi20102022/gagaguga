@@ -380,8 +380,10 @@ export default function AdminDashboard() {
                   }}
                   className="h-11 rounded-xl border-2 bg-background px-3 text-sm"
                 >
-                  {dealersList.length > 0
-                    ? dealersList.map((d) => (
+                  {/* A dealer with an empty key would send `?dealer=`, which the API
+                      rejects as "Missing dealer" — never offer one as a choice. */}
+                  {dealersList.filter((d) => d.key).length > 0
+                    ? dealersList.filter((d) => d.key).map((d) => (
                         <option key={d.key} value={d.key}>{d.name}</option>
                       ))
                     : <>

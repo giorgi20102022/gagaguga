@@ -10,7 +10,7 @@ import { Step4Finalize } from "@/components/wizard/Step4Finalize";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { AnimatePresence } from "framer-motion";
-import { LogOut, LayoutDashboard, Loader2 } from "lucide-react";
+import { LogOut, LayoutDashboard, Loader2, Clock } from "lucide-react";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import axios from "axios";
 import { registerDealerPersonalIdOnPortal } from "@/lib/dealerPersonalId";
@@ -22,6 +22,30 @@ import {
 } from "@/lib/wizardPersistence";
 import { compressBase64ToBlob } from "@/lib/imageUpload";
 const WIZARD_STORAGE_KEY = "dealer_wizard_state";
+
+// Survives a reload / tab kill so a submission still waiting in the server queue can be
+// picked back up instead of vanishing and prompting the dealer to re-submit.
+const PENDING_SUBMISSION_KEY = "pendingSubmissionId";
+
+function readPendingSubmissionId(): string | null {
+  try {
+    return localStorage.getItem(PENDING_SUBMISSION_KEY);
+  } catch {
+    return null; // Safari Private Browsing / storage disabled
+  }
+}
+
+function writePendingSubmissionId(submissionId: string) {
+  try {
+    localStorage.setItem(PENDING_SUBMISSION_KEY, submissionId);
+  } catch { /* ignore — the in-memory poll still works for this page life */ }
+}
+
+function clearPendingSubmissionId() {
+  try {
+    localStorage.removeItem(PENDING_SUBMISSION_KEY);
+  } catch { /* ignore */ }
+}
 
 // N8N_WEBHOOK_URL constant removed; using sendN8NRequest from api.ts
 
@@ -131,12 +155,24 @@ export default function DealerDashboard() {
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
+    // Read before the blanket clear below, which would otherwise wipe the very key that
+    // lets a queued submission survive a reload.
+    const pendingSubmissionId = readPendingSubmissionId();
+
     try { localStorage.clear(); } catch { /* ignore */ }
     try { sessionStorage.clear(); } catch { /* ignore */ }
     setFormData({});
     setStep(1);
     setErrorMessage('');
     setIsRehydrating(false);
+
+    if (pendingSubmissionId) {
+      // A submission from a previous page life is still in the server's queue. Put the id
+      // back and hand it to the same poll effect the live flow uses. Nothing about the
+      // wizard is restored or re-triggered — this only resurrects the status view.
+      writePendingSubmissionId(pendingSubmissionId);
+      setQueuedSubmission({ submissionId: pendingSubmissionId, queuePosition: null });
+    }
   }, []);
 
   useEffect(() => {
@@ -160,6 +196,98 @@ export default function DealerDashboard() {
 
   const [isStatusModalOpen, setIsStatusModalOpen] = useState(false);
   const [submissionStatus, setSubmissionStatus] = useState<'success' | 'error' | null>(null);
+  // Set when the server answers 202/queued: the submission is safely in the server-side
+  // retry queue and we poll for its real outcome instead of showing a false timeout.
+  // queuePosition is null until the first poll answers — the case when this is restored
+  // from localStorage after a reload, where no position was cached.
+  const [queuedSubmission, setQueuedSubmission] = useState<{ submissionId: string; queuePosition: number | null } | null>(null);
+
+  // Both the immediate (Scenario A) and the queued (Scenario B) paths end here, so the
+  // dealer sees exactly the same success / error UI either way.
+  const finishSubmissionSuccess = useCallback(async () => {
+    toast({
+      title: "განაცხადი გაიგზავნა",
+      description: "მომხმარებლის განაცხადი წარმატებით დამუშავდა.",
+    });
+    setSubmissionStatus('success');
+    try { localStorage.clear(); } catch { /* ignore Safari Private Browsing restriction */ }
+    try { sessionStorage.clear(); } catch { /* ignore Safari Private Browsing restriction */ }
+    await clearWizardState(WIZARD_STORAGE_KEY);
+    // Settle isSubmitting (a prop Step4Finalize renders from) before setStep swaps the
+    // step out. Leaving it to the finally block would flip it in a separate render
+    // pass, re-rendering a step subtree the <AnimatePresence mode="wait"> below is
+    // already animating out.
+    setIsSubmitting(false);
+    setFormData({});
+    setStep(1);
+    setErrorMessage('');
+    setIsStatusModalOpen(true);
+  }, [toast]);
+
+  const finishSubmissionError = useCallback((detailedMsg: string) => {
+    setErrorMessage(detailedMsg);
+    toast({
+      title: detailedMsg === "კოდი ვერ დაემატა" ? "კოდი ვერ დაემატა" : "გაგზავნის შეცდომა",
+      description: detailedMsg,
+      variant: "destructive",
+    });
+    setSubmissionStatus('error');
+    setIsStatusModalOpen(true);
+  }, [toast]);
+
+  // Poll the queued submission's real status. The server-side worker re-checks its
+  // collision window once a minute, so nothing can change faster than that.
+  useEffect(() => {
+    const submissionId = queuedSubmission?.submissionId;
+    if (!submissionId) return;
+
+    let cancelled = false;
+
+    const poll = async () => {
+      try {
+        const res = await axios.get(`/api/submission-status/${submissionId}`);
+        if (cancelled) return;
+        const { status, message, queuePosition } = res.data ?? {};
+
+        if (status === "success") {
+          clearPendingSubmissionId();
+          setQueuedSubmission(null);
+          await finishSubmissionSuccess();
+        } else if (status === "failed") {
+          clearPendingSubmissionId();
+          setQueuedSubmission(null);
+          finishSubmissionError(message || "განაცხადის დამუშავება ვერ მოხერხდა");
+        } else if (typeof queuePosition === "number") {
+          setQueuedSubmission((prev) =>
+            prev && prev.queuePosition !== queuePosition ? { ...prev, queuePosition } : prev,
+          );
+        }
+      } catch (err) {
+        if (cancelled) return;
+        if (axios.isAxiosError(err) && err.response?.status === 404) {
+          // The server has no record of this submission (it restarted, losing the
+          // in-memory queue). Say so rather than spinning forever, and drop the persisted
+          // id — there is nothing left to resume on a future visit.
+          clearPendingSubmissionId();
+          setQueuedSubmission(null);
+          finishSubmissionError("განაცხადის სტატუსი ვერ მოიძებნა. გთხოვთ, დაუკავშირდეთ ადმინისტრატორს.");
+          return;
+        }
+        // A transient network/poll error is not a failed submission — keep waiting.
+        console.error("[Submit] Queue status poll failed:", err);
+      }
+    };
+
+    // Poll once straight away, then on the worker's own cadence. The immediate call is
+    // what fills in the position for a submission restored from localStorage, which has
+    // no cached position to show.
+    void poll();
+    const interval = setInterval(poll, 60000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [queuedSubmission?.submissionId, finishSubmissionSuccess, finishSubmissionError]);
 
   useEffect(() => {
     if (isStatusModalOpen) {
@@ -395,43 +523,23 @@ export default function DealerDashboard() {
         throw err;
       }
 
-      if (response.status === 202 || responseData?.status === "queued") {
-        setLoadingMessage("თქვენი მოთხოვნა რიგშია. გთხოვთ, არ დახუროთ გვერდი, მიმდინარეობს დამუშავება...");
-
-        const trackingId = responseData?.trackingId || responseData?.id;
-        if (trackingId) {
-          let isCompleted = false;
-          while (!isCompleted) {
-            await new Promise(r => setTimeout(r, 3000));
-            const pollRes = await axios.get(`/api/workspace/status/${trackingId}`);
-            if (pollRes.data?.status === "completed" || pollRes.data?.success) {
-              isCompleted = true;
-            } else if (pollRes.data?.status === "error" || pollRes.data?.success === false) {
-              throw new Error(pollRes.data?.message || "დამუშავების შეცდომა");
-            }
-          }
-        } else {
-          return;
-        }
+      if ((response.status === 202 || responseData?.queued === true) && responseData?.submissionId) {
+        // The server put this in its retry queue. Stay on this step, show the position,
+        // and let the poll effect above deliver the real outcome — the old code raced a
+        // flat 120s timeout here and reported "Timeout" for submissions that were still
+        // queued and would go on to succeed.
+        // Persist first: if the tab dies before the next render, the id is what lets the
+        // next page life resume this submission instead of the dealer re-submitting.
+        writePendingSubmissionId(responseData.submissionId);
+        setQueuedSubmission({
+          submissionId: responseData.submissionId,
+          queuePosition: Number(responseData.queuePosition) || 0,
+        });
+        setErrorMessage('');
+        return;
       }
 
-      toast({
-        title: "განაცხადი გაიგზავნა",
-        description: "მომხმარებლის განაცხადი წარმატებით დამუშავდა.",
-      });
-      setSubmissionStatus('success');
-      try { localStorage.clear(); } catch { /* ignore Safari Private Browsing restriction */ }
-      try { sessionStorage.clear(); } catch { /* ignore Safari Private Browsing restriction */ }
-      await clearWizardState(WIZARD_STORAGE_KEY);
-      // Settle isSubmitting (a prop Step4Finalize renders from) before setStep swaps the
-      // step out. Leaving it to the finally block would flip it in a separate render
-      // pass, re-rendering a step subtree the <AnimatePresence mode="wait"> below is
-      // already animating out.
-      setIsSubmitting(false);
-      setFormData({});
-      setStep(1);
-      setErrorMessage('');
-      setIsStatusModalOpen(true);
+      await finishSubmissionSuccess();
     } catch (error: any) {
       console.error("[Submit] Native Error Structure:", {
         name: error?.name,
@@ -454,14 +562,7 @@ export default function DealerDashboard() {
         detailedMsg = error.message;
       }
 
-      setErrorMessage(detailedMsg);
-      toast({
-        title: detailedMsg === "კოდი ვერ დაემატა" ? "კოდი ვერ დაემატა" : "გაგზავნის შეცდომა",
-        description: detailedMsg,
-        variant: "destructive",
-      });
-      setSubmissionStatus('error');
-      setIsStatusModalOpen(true);
+      finishSubmissionError(detailedMsg);
     } finally {
       // Still required for the error path; idempotent after the success path above.
       setIsSubmitting(false);
@@ -469,8 +570,14 @@ export default function DealerDashboard() {
   };
 
   const cancelSale = async () => {
+    // Cancelling the sale in progress must not discard an unrelated submission that is
+    // still queued from an earlier run — carry its id across the blanket clear.
+    const pendingSubmissionId = queuedSubmission ? readPendingSubmissionId() : null;
+
     try { localStorage.clear(); } catch { /* ignore */ }
     try { sessionStorage.clear(); } catch { /* ignore */ }
+
+    if (pendingSubmissionId) writePendingSubmissionId(pendingSubmissionId);
     await clearWizardState(WIZARD_STORAGE_KEY);
     setFormData({});
     setStep(1);
@@ -553,6 +660,25 @@ export default function DealerDashboard() {
             </div>
           )}
 
+          {/* Queued banner at dashboard level. Step4Finalize renders its own while the
+              dealer is still on step 5 in the live flow; this one covers the restored
+              case, where the wizard has reset to step 1 and that banner is not mounted. */}
+          {queuedSubmission && step !== 5 && (
+            <div className="mb-4 p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-start gap-3">
+              <Clock className="w-5 h-5 text-amber-600 mt-0.5 shrink-0 animate-pulse" />
+              <div>
+                <h4 className="font-semibold text-amber-700 dark:text-amber-400">რიგშია — დამუშავდება მალე</h4>
+                <p className="text-sm text-amber-700/80 dark:text-amber-400/80">
+                  {queuedSubmission.queuePosition === null
+                    ? "მიმდინარეობს სტატუსის შემოწმება..."
+                    : queuedSubmission.queuePosition > 0
+                    ? `თქვენს წინ არის ${queuedSubmission.queuePosition} განაცხადი. გთხოვთ, არ დახუროთ გვერდი.`
+                    : "თქვენი განაცხადი მუშავდება. გთხოვთ, არ დახუროთ გვერდი."}
+                </p>
+              </div>
+            </div>
+          )}
+
           <StepIndicator currentStep={step} />
 
           <div className="mt-8 relative min-h-[400px]">
@@ -575,7 +701,7 @@ export default function DealerDashboard() {
                   <Step3Product key="step3" data={formData} updateData={updateData} onNext={nextStep} onBack={prevStep} dealerKey={dealer.key} dealerName={dealer.name} active={step === 4} />
                 )}
                 {step === 5 && (
-                  <Step4Finalize key="step4" data={formData} updateData={updateData} onSubmit={handleSubmit} onBack={prevStep} isSubmitting={isSubmitting} onCancelSale={cancelSale} active={step === 5} requireSmsVerification={dealer?.requireSmsVerification} />
+                  <Step4Finalize key="step4" data={formData} updateData={updateData} onSubmit={handleSubmit} onBack={prevStep} isSubmitting={isSubmitting} onCancelSale={cancelSale} active={step === 5} requireSmsVerification={dealer?.requireSmsVerification} queuedSubmission={queuedSubmission} />
                 )}
               </AnimatePresence>
             </ErrorBoundary>

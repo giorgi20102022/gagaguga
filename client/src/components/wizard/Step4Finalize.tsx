@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
-import { Camera, CheckCircle2, ShieldCheck, MapPin, ScanLine, AlertCircle, XCircle, Check, ChevronsUpDown } from "lucide-react";
+import { Camera, CheckCircle2, ShieldCheck, MapPin, ScanLine, AlertCircle, XCircle, Check, ChevronsUpDown, Clock } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { sendN8NRequest } from "@/lib/api";
 import axios from "axios";
@@ -169,9 +169,11 @@ interface Props {
   onCancelSale?: () => void;
   active?: boolean;
   requireSmsVerification?: boolean;
+  /** Set once the server accepted this submission into its retry queue (HTTP 202). */
+  queuedSubmission?: { submissionId: string; queuePosition: number | null } | null;
 }
 
-export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmitting, loadingMessage, onCancelSale, active, requireSmsVerification }: Props) {
+export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmitting, loadingMessage, onCancelSale, active, requireSmsVerification, queuedSubmission }: Props) {
   const { toast } = useToast();
   const [isVerifying, setIsVerifying] = useState(false);
   const [errors, setErrors] = useState<Record<string, boolean>>({});
@@ -430,10 +432,13 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
     data.cityDistrict && data.addressVillage && data.addressVillage.trim() !== ""
   );
 
+  const isQueued = !!queuedSubmission;
+
   const isSubmitDisabled =
     isSubmitting ||
     isCancelling ||
     isCompilingSignature ||
+    isQueued ||
     !(data.model && data.price !== undefined && data.receiptPhoto);
 
   return (
@@ -725,13 +730,31 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
         </div>
       </div>
 
+      {/* Queued (server Scenario B): the submission is safely in the server's retry queue
+          and its real result arrives via polling. Distinct from loading/success/error. */}
+      {isQueued && (
+        <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-start gap-3">
+          <Clock className="w-5 h-5 text-amber-600 mt-0.5 shrink-0 animate-pulse" />
+          <div>
+            <h4 className="font-semibold text-amber-700 dark:text-amber-400">რიგშია — დამუშავდება მალე</h4>
+            <p className="text-sm text-amber-700/80 dark:text-amber-400/80">
+              {queuedSubmission!.queuePosition === null
+                ? "მიმდინარეობს სტატუსის შემოწმება..."
+                : queuedSubmission!.queuePosition > 0
+                ? `თქვენს წინ არის ${queuedSubmission!.queuePosition} განაცხადი. გთხოვთ, არ დახუროთ გვერდი.`
+                : "თქვენი განაცხადი მუშავდება. გთხოვთ, არ დახუროთ გვერდი."}
+            </p>
+          </div>
+        </div>
+      )}
+
       <div className="pt-6 flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-4 border-t border-border mt-8">
         <Button
           type="button"
           variant="outline"
           className="w-full sm:w-auto px-6 h-12 rounded-xl text-base border-red-300 text-red-600 hover:bg-red-50 hover:border-red-400 hover:text-red-700 gap-2 justify-center order-last sm:order-none mt-auto"
           onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleCancelSale(); }}
-          disabled={isSubmitting || isCancelling}
+          disabled={isSubmitting || isCancelling || isQueued}
         >
           {isCancelling ? (
             <>
@@ -747,14 +770,18 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
         </Button>
 
         <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center gap-3">
-          <Button type="button" variant="outline" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onBack(); }} disabled={isSubmitting || isCancelling || isCompilingSignature || isVerifying || isSendingSms || isVerifyingSms} className="w-full sm:w-auto px-8 h-12 rounded-xl text-base">უკან</Button>
+          <Button type="button" variant="outline" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onBack(); }} disabled={isSubmitting || isCancelling || isCompilingSignature || isVerifying || isSendingSms || isVerifyingSms || isQueued} className="w-full sm:w-auto px-8 h-12 rounded-xl text-base">უკან</Button>
           <Button
             type="button"
             onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleFinish(e); }}
             disabled={isSubmitDisabled}
             className="w-full sm:w-auto px-10 h-12 rounded-xl text-base font-bold shadow-lg shadow-primary/25 hover:-translate-y-0.5 transition-all"
           >
-            {isSubmitting || isCompilingSignature ? (loadingMessage || "მონაცემები მოწმდება...") : "განაცხადის გაგზავნა"}
+            {isQueued
+              ? "რიგშია — დამუშავდება მალე"
+              : isSubmitting || isCompilingSignature
+              ? (loadingMessage || "მონაცემები მოწმდება...")
+              : "განაცხადის გაგზავნა"}
           </Button>
         </div>
       </div>
