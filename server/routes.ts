@@ -895,6 +895,18 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
         item = item.data;
       }
 
+      // n8n rejects unreadable/wrong receipts with {success:false, message:"..."}. Without
+      // this check the handler just found no amount and returned total_amount:null, and the
+      // dealer got a generic "couldn't read" instead of the actual reason.
+      if (item.success === false || item.isValid === false) {
+        const receiptMessage =
+          (typeof item.message === "string" && item.message.trim()) ||
+          (typeof item.error === "string" && item.error.trim()) ||
+          "ქვითრის გადამოწმება ვერ მოხერხდა";
+        console.warn("[Receipt Verification] n8n reported failure:", receiptMessage);
+        return res.status(400).json({ message: receiptMessage });
+      }
+
       // Extract the amount — try common field names
       const totalAmount = item.total_amount ?? item.totalAmount ?? item.amount ?? item.price ?? null;
       console.log("[Receipt Verification] Extracted total_amount:", totalAmount, "from item keys:", Object.keys(item));
@@ -1159,9 +1171,26 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
         error,
       } = extracted;
 
-      // If document is marked invalid, return the verification error
-      if (isValidDocument === false) {
-        return res.status(400).json({ verificationError: error });
+      // n8n's own verdict first. Like the pensioner endpoint, this has to precede the
+      // familyMembers/personal-ID lookup below: a rejected document yields no
+      // familyMembers, so the lookup would report "პირადი ნომერი არ ემთხვევა" instead of
+      // the real reason n8n gave.
+      const n8nRejectionMessage =
+        typeof extracted.message === "string" && extracted.message.trim()
+          ? extracted.message.trim()
+          : typeof error === "string" && error.trim()
+          ? error.trim()
+          : null;
+
+      if (extracted.success === false || isValidDocument === false) {
+        const specificMessage = mapSocialVerificationError(n8nRejectionMessage ?? error);
+        console.warn("[Social Card Verification] n8n reported failure:", specificMessage);
+        // verificationError is what the wizard reads first; message keeps the shape
+        // consistent with the other vision endpoints.
+        return res.status(400).json({
+          verificationError: specificMessage,
+          message: specificMessage,
+        });
       }
 
       const targetId = normalizePersonalId(
@@ -1465,6 +1494,41 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
         return record;
       };
 
+      // Mirrors extractSuccess, but digs out the human-readable reason n8n sent alongside
+      // the verdict. n8n nests it inconsistently (top level, under .data, or in an array),
+      // which is why the same recursive walk is needed rather than a direct field read.
+      const extractSuccessMessage = (value: unknown): string | null => {
+        if (typeof value === "string") {
+          return value.trim() || null;
+        }
+
+        if (Array.isArray(value)) {
+          for (const entry of value) {
+            const found = extractSuccessMessage(entry);
+            if (found) return found;
+          }
+          return null;
+        }
+
+        if (!value || typeof value !== "object") {
+          return null;
+        }
+
+        const record = value as Record<string, any>;
+        for (const key of ["message", "error", "reason", "msg"]) {
+          if (typeof record[key] === "string" && record[key].trim()) {
+            return record[key].trim();
+          }
+        }
+
+        for (const key of ["data", "result", "response", "body"]) {
+          const found = extractSuccessMessage(record[key]);
+          if (found) return found;
+        }
+
+        return null;
+      };
+
       const extractSuccess = (value: unknown): boolean | null => {
         if (typeof value === "boolean") {
           return value;
@@ -1530,6 +1594,24 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
 
       const extractedSuccess = extractSuccess(raw);
 
+      // n8n's own verdict comes first. It has to be checked BEFORE the personal-ID
+      // comparison below: when n8n rejects the document (wrong type, blurry, expired) it
+      // extracts no personal ID, so the ID check would fail too and report "პირადი ნომერი
+      // არ ემთხვევა" — hiding the actual reason behind a wrong one.
+      if (extractedSuccess === false) {
+        const n8nMessage = item.message || item.error || extractSuccessMessage(raw);
+        console.warn("[Pensioner Verification] n8n reported failure:", n8nMessage);
+        return res.json({
+          success: false,
+          firstName: ocrFirstName,
+          lastName: ocrLastName,
+          personalId: ocrPersonalId,
+          // Forward n8n's specific reason verbatim; the fallback only applies when n8n
+          // genuinely sent no text at all.
+          message: n8nMessage || "დოკუმენტის გადამოწმება ვერ მოხერხდა",
+        });
+      }
+
       const normId = (v: unknown) => String(v ?? "").trim().replace(/\s+/g, "");
       const idKey = personalId || idNumber;
       const ocrId = normId(ocrPersonalId);
@@ -1552,15 +1634,6 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
 
         return res.json({
           success: true,
-          firstName: ocrFirstName,
-          lastName: ocrLastName,
-          personalId: ocrPersonalId,
-        });
-      }
-
-      if (extractedSuccess === false) {
-        return res.json({
-          success: false,
           firstName: ocrFirstName,
           lastName: ocrLastName,
           personalId: ocrPersonalId,

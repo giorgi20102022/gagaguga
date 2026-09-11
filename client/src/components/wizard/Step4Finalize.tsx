@@ -321,6 +321,11 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
 
     setIsVerifying(true); // derived verificationResult is null while isVerifying=true
 
+    // Holds a reason that is safe and useful to show the dealer. Technical throws
+    // (network, JSON parse) deliberately leave it null so the generic copy is used —
+    // "Failed to fetch" is not something to put in front of a dealer.
+    let dealerFacingReason: string | null = null;
+
     try {
       const res = await fetch("/api/vision/verify-receipt", {
         method: "POST",
@@ -329,8 +334,15 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
       });
 
       if (!res.ok) {
-        const errorText = await res.text();
-        throw new Error(`Verification failed: ${errorText}`);
+        // Surface the server's specific reason (which now carries n8n's own text) rather
+        // than a raw body dump that the catch below would replace with generic copy.
+        const errBody = await res.json().catch(() => null);
+        const serverMessage =
+          (typeof errBody?.message === "string" && errBody.message.trim()) ||
+          (typeof errBody?.error === "string" && errBody.error.trim()) ||
+          null;
+        dealerFacingReason = serverMessage;
+        throw new Error(serverMessage || `Receipt verification failed (${res.status})`);
       }
 
       const result = await res.json();
@@ -338,6 +350,7 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
       const rawAmount = result?.total_amount;
 
       if (rawAmount === null || rawAmount === undefined) {
+        dealerFacingReason = "ქვითარზე თანხა ვერ წაიკითხა. გთხოვთ, ატვირთოთ უფრო მკაფიო ფოტო";
         throw new Error("Could not extract amount from response");
       }
 
@@ -345,6 +358,7 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
       const finalPrice = Number(Number(data.finalPayable ?? 0).toFixed(2));
 
       if (isNaN(receiptPrice)) {
+        dealerFacingReason = "ქვითარზე თანხა ვერ წაიკითხა. გთხოვთ, ატვირთოთ უფრო მკაფიო ფოტო";
         throw new Error("Could not parse receipt amount: " + String(rawAmount));
       }
 
@@ -359,7 +373,11 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
     } catch (err) {
       if (!isMountedRef.current) return;
       console.error("[Receipt Verification] Error:", err);
-      const message = "❌ ვერ მოხერხდა მონაცემების ამოკითხვა";
+      // Show the reason when we have a dealer-facing one. The hardcoded string that used
+      // to be here discarded n8n's specific explanation on every failure.
+      const message = dealerFacingReason
+        ? `❌ ${dealerFacingReason}`
+        : "❌ ვერ მოხერხდა მონაცემების ამოკითხვა";
       updateData({
         receiptVerified: false,
         receiptVerificationMessage: message

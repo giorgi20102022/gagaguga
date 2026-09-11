@@ -267,10 +267,12 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
 
       if (verificationSuccess === false) {
         setIsPensionerVerified(false);
+        // Check both field names — the vision endpoints are not consistent about which
+        // one carries n8n's reason. The fallback applies only when neither is present.
         setPensionerVerifyError(
-          typeof verified.message === "string" && verified.message.trim()
-            ? verified.message
-            : "დოკუმენტის გადამოწმება ვერ მოხერხდა",
+          (typeof verified.message === "string" && verified.message.trim()) ||
+            (typeof (verified as any).error === "string" && (verified as any).error.trim()) ||
+            "დოკუმენტის გადამოწმება ვერ მოხერხდა",
         );
         return;
       }
@@ -293,7 +295,7 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
       const errData = (err as any)?.response?.data;
       const georgianMsg = extractVisionApiError(errData);
       const msg = georgianMsg
-        ?? (typeof errData?.message === "string" ? errData.message : null)
+        ?? getErrorMessage(errData)
         ?? ((err as any)?.code === "ECONNABORTED" ? "ვერიფიკაციის მოთხოვნას დრო გაუვიდა" : null)
         ?? "დადასტურება ვერ მოხერხდა";
       setIsPensionerVerified(false);
