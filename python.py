@@ -68,8 +68,11 @@ def _wait_for_result_text(page, max_wait_ms: int, *, poll_interval_ms: int = POL
 
 
 def _search_personal_id(page, personal_id: str) -> str:
+    # Pressing Enter does NOT submit this form (verified against the live portal —
+    # it fires zero network requests). The site wires submission to the button's
+    # click handler specifically, so it must be clicked, not triggered via keyboard.
     page.locator('input[type="text"]').first.fill(personal_id)
-    page.keyboard.press("Enter")
+    page.get_by_role("button", name="ძებნა").click()
     return _wait_for_result_text(page, SEARCH_WAIT_MS)
 
 

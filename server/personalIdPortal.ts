@@ -50,7 +50,10 @@ async function login(page: Page): Promise<void> {
   await page.waitForSelector("#cadcode", { state: "visible", timeout: 30_000 });
   await page.fill("#cadcode", COMPANY_CODE);
   await page.fill("#password", PASSWORD);
-  await page.locator('button[type="submit"]').dispatchEvent('click');
+  // A real click, not a synthetic dispatchEvent — the search form on this same
+  // site turned out to ignore non-click submissions (see searchPersonalId), so
+  // this uses the same verified-working interaction for consistency.
+  await page.locator('button[type="submit"]').click();
   await page.waitForSelector("text=ბენეფიციარის შემოწმება", { timeout: 90_000 });
 }
 
@@ -96,8 +99,11 @@ async function waitForRegisterResult(
 }
 
 async function searchPersonalId(page: Page, personalId: string): Promise<string> {
+  // Pressing Enter does NOT submit this form (verified against the live portal —
+  // it fires zero network requests). The site wires submission to the button's
+  // click handler specifically, so it must be clicked, not triggered via keyboard.
   await page.locator('input[type="text"]').first().fill(personalId);
-  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: "ძებნა" }).click();
   return waitForResultText(page, SEARCH_WAIT_MS);
 }
 
