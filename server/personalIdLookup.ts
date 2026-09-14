@@ -11,7 +11,10 @@ export type PersonalIdLookupResult = {
 };
 
 const PYTHON_SCRIPT = path.resolve(process.cwd(), "python.py");
-const LOOKUP_TIMEOUT_MS = Number(process.env.PERSONAL_ID_LOOKUP_TIMEOUT_MS ?? 120_000);
+// python.py now retries internally (up to PERSONAL_ID_LOOKUP_MAX_ATTEMPTS, default 3)
+// on inconclusive portal failures, so this needs enough headroom for several
+// full login+search attempts, not just one.
+const LOOKUP_TIMEOUT_MS = Number(process.env.PERSONAL_ID_LOOKUP_TIMEOUT_MS ?? 240_000);
 
 function pythonCommands(): string[][] {
   const configured = (process.env.PYTHON_CMD || process.env.PYTHON_EXECUTABLE)?.trim();

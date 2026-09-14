@@ -68,7 +68,9 @@ export function Step2DealerPersonalId({ data, updateData, onNext, onBack, onRest
           lastName: String(data.lastName ?? "").trim(),
           mode: "check",
         },
-        { withCredentials: true, timeout: 130_000, signal: controller.signal },
+        // Server now retries internally on inconclusive portal failures (up to
+        // ~240s worst case), so this must stay comfortably above that ceiling.
+        { withCredentials: true, timeout: 260_000, signal: controller.signal },
       );
 
       if (isCancelled()) return;

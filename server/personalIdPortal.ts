@@ -4,8 +4,11 @@ import type { PersonalIdLookupResult } from "./personalIdLookup";
 const PORTAL_URL = process.env.PERSONAL_ID_LOOKUP_URL || "https://voucher.rda.gov.ge/";
 const COMPANY_CODE = process.env.PERSONAL_ID_LOOKUP_COMPANY_CODE || "424615394";
 const PASSWORD = process.env.PERSONAL_ID_LOOKUP_PASSWORD || "123456";
-const SEARCH_WAIT_MS = Number(process.env.PERSONAL_ID_LOOKUP_SEARCH_WAIT_MS ?? 2500);
-const REGISTER_WAIT_MS = Number(process.env.PERSONAL_ID_LOOKUP_REGISTER_WAIT_MS ?? 4000);
+const SEARCH_WAIT_MS = Number(process.env.PERSONAL_ID_LOOKUP_SEARCH_WAIT_MS ?? 15000);
+const REGISTER_WAIT_MS = Number(process.env.PERSONAL_ID_LOOKUP_REGISTER_WAIT_MS ?? 15000);
+const POLL_INTERVAL_MS = Number(process.env.PERSONAL_ID_LOOKUP_POLL_INTERVAL_MS ?? 300);
+const MAX_ATTEMPTS = Number(process.env.PERSONAL_ID_LOOKUP_MAX_ATTEMPTS ?? 3);
+const RETRY_DELAY_MS = Number(process.env.PERSONAL_ID_LOOKUP_RETRY_DELAY_MS ?? 1000);
 
 const ALREADY_USED_MESSAGE =
   "ამ მომხმარებელმა უკვე ისარგებლა  სუბსიდირების პროგრამით";
@@ -13,6 +16,10 @@ const REGISTER_SUCCESS_MESSAGE = "ბენეფიციარი წარმ
 const ELIGIBLE_MESSAGE = "ბენეფიციარი სისტემაშია.";
 const CAN_USE_MESSAGE =
   "მომხმარებელს სუბსიდირების პროგრამით ჯერ არ უსარგებლია შეგიძლიათ განაცხადის გაგრძელება.";
+
+// Result text appears asynchronously after the search; these are the substrings
+// parseSearchResult looks for once the portal has actually responded.
+const RESULT_KEYWORDS = ["ისარგებლა", "არ მოიძებნა", "ნაპოვნ"];
 
 function normalizePersonalId(value: string): string {
   return String(value ?? "").trim().replace(/\s+/g, "");
@@ -47,11 +54,51 @@ async function login(page: Page): Promise<void> {
   await page.waitForSelector("text=ბენეფიციარის შემოწმება", { timeout: 90_000 });
 }
 
+// Polls the page text until a recognizable result appears, instead of guessing
+// a fixed sleep. The portal's response time is variable, so a fixed wait either
+// reads a stale (pre-response) page too early or wastes time waiting longer
+// than necessary.
+async function waitForResultText(
+  page: Page,
+  maxWaitMs: number,
+  pollIntervalMs = POLL_INTERVAL_MS,
+): Promise<string> {
+  const deadline = Date.now() + maxWaitMs;
+  let text = await pageText(page);
+  while (Date.now() < deadline) {
+    const lowered = text.toLowerCase();
+    if (RESULT_KEYWORDS.some((keyword) => lowered.includes(keyword))) {
+      return text;
+    }
+    await page.waitForTimeout(pollIntervalMs);
+    text = await pageText(page);
+  }
+  return text;
+}
+
+// Polls until the registration form disappears (submitted) instead of
+// guessing a fixed sleep, for the same reason as waitForResultText.
+async function waitForRegisterResult(
+  page: Page,
+  maxWaitMs: number,
+  pollIntervalMs = POLL_INTERVAL_MS,
+): Promise<string> {
+  const deadline = Date.now() + maxWaitMs;
+  let text = await pageText(page);
+  while (Date.now() < deadline) {
+    if (!(text.includes("გაგზავნა") && text.includes("სახელი"))) {
+      return text;
+    }
+    await page.waitForTimeout(pollIntervalMs);
+    text = await pageText(page);
+  }
+  return text;
+}
+
 async function searchPersonalId(page: Page, personalId: string): Promise<string> {
   await page.locator('input[type="text"]').first().fill(personalId);
   await page.keyboard.press("Enter");
-  await page.waitForTimeout(SEARCH_WAIT_MS);
-  return pageText(page);
+  return waitForResultText(page, SEARCH_WAIT_MS);
 }
 
 async function registerBeneficiary(
@@ -66,14 +113,13 @@ async function registerBeneficiary(
   }
 
   await regBtn.first().click();
-  await page.waitForTimeout(1500);
+  await page.waitForSelector('input[name="firstName"]', { state: "visible", timeout: 10_000 });
   await page.locator('input[name="firstName"]').fill(firstName);
   await page.locator('input[name="lastName"]').fill(lastName);
   await page.locator('input[name="personalId"]').fill(personalId);
   await page.getByRole("button", { name: "გაგზავნა" }).click();
-  await page.waitForTimeout(REGISTER_WAIT_MS);
 
-  const text = await pageText(page);
+  const text = await waitForRegisterResult(page, REGISTER_WAIT_MS);
   if (text.includes("გაგზავნა") && text.includes("სახელი")) {
     return { ok: false, text: "ბენეფიციარის რეგისტრაცია ვერ დასრულდა" };
   }
@@ -149,6 +195,52 @@ async function parseSearchResult(
   };
 }
 
+// A result is worth retrying only when it's an inconclusive technical failure
+// (portal timeout, unexpected page state). Definitive answers (already_used,
+// not_found, eligible, added) and invalid input must never be retried —
+// retrying them either can't change the outcome or would resubmit a
+// registration that already went through.
+function isRetryable(result: PersonalIdLookupResult): boolean {
+  return !result.success && result.status !== "already_used" && result.status !== "invalid_input";
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function attemptLookup(
+  personalId: string,
+  firstName: string,
+  lastName: string,
+  register: boolean,
+): Promise<PersonalIdLookupResult> {
+  const browser = await launchBrowser();
+  const page = await browser.newPage();
+
+  try {
+    await login(page);
+    const searchText = await searchPersonalId(page, personalId);
+    return await parseSearchResult(
+      page,
+      searchText,
+      personalId,
+      firstName,
+      lastName,
+      register,
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      success: false,
+      status: "error",
+      message: `შემოწმება ვერ მოხერხდა: ${message}`,
+      personalId,
+    };
+  } finally {
+    await browser.close();
+  }
+}
+
 export async function lookupPersonalIdOnPortal(
   personalId: string,
   options?: { firstName?: string; lastName?: string; mode?: "check" | "register" },
@@ -161,6 +253,7 @@ export async function lookupPersonalIdOnPortal(
   if (!normalized) {
     return {
       success: false,
+      status: "invalid_input",
       message: "პირადი ნომერი არ არის მითითებული",
       personalId: normalized,
     };
@@ -169,33 +262,21 @@ export async function lookupPersonalIdOnPortal(
   if (!/^\d{11}$/.test(normalized)) {
     return {
       success: false,
+      status: "invalid_input",
       message: "პირადი ნომერი უნდა იყოს 11 ციფრი",
       personalId: normalized,
     };
   }
 
-  const browser = await launchBrowser();
-  const page = await browser.newPage();
-
-  try {
-    await login(page);
-    const searchText = await searchPersonalId(page, normalized);
-    return await parseSearchResult(
-      page,
-      searchText,
-      normalized,
-      firstName,
-      lastName,
-      register,
-    );
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return {
-      success: false,
-      message: `შემოწმება ვერ მოხერხდა: ${message}`,
-      personalId: normalized,
-    };
-  } finally {
-    await browser.close();
+  let result: PersonalIdLookupResult | undefined;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    result = await attemptLookup(normalized, firstName, lastName, register);
+    if (!isRetryable(result)) {
+      return result;
+    }
+    if (attempt < MAX_ATTEMPTS) {
+      await delay(RETRY_DELAY_MS);
+    }
   }
+  return result!;
 }

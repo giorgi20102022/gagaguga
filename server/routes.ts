@@ -924,6 +924,12 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
 
   // Dealer personal ID lookup (Playwright / python.py on voucher.rda.gov.ge)
   app.post("/api/verification/dealer-personal-id", async (req: Request, res: Response) => {
+    // This lookup now retries internally on inconclusive portal failures
+    // (see runPersonalIdLookup / python.py), which can take longer than the
+    // server's global 120s socket timeout (server/index.ts). Extend it for
+    // this request only — runPersonalIdLookup still bounds the real worst
+    // case via PERSONAL_ID_LOOKUP_TIMEOUT_MS.
+    req.setTimeout(250_000);
     try {
       const personalId = String(req.body?.personalId ?? "").trim();
       const firstName = String(req.body?.firstName ?? "").trim();
@@ -1703,6 +1709,13 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
       }
       const input = submissionSchema.parse(bodyData);
 
+      if (input.receiptVerified !== true) {
+        return res.status(400).json({
+          message: "ქვითარი უნდა იყოს ატვირთული და დადასტურებული გაგზავნამდე",
+          field: "receiptVerified",
+        });
+      }
+
       // Normalize gender to Georgian + boolean flags
       const genderMap: Record<string, string> = { M: "მამრობითი", F: "მდედრობითი", m: "მამრობითი", f: "მდედრობითი" };
       const genderGeo = genderMap[input.gender] || input.gender || "NONE";
@@ -1858,6 +1871,13 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
         }
       }
       const input = submissionSchema.parse(bodyData);
+
+      if (input.receiptVerified !== true) {
+        return res.status(400).json({
+          message: "ქვითარი უნდა იყოს ატვირთული და დადასტურებული გაგზავნამდე",
+          field: "receiptVerified",
+        });
+      }
 
       // Authoritative dealer name from DB — cannot be tampered with by the frontend
       const dealerRecord = await storage.getDealerById(dealerId);

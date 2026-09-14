@@ -425,7 +425,7 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
       const newErrors: Record<string, boolean> = {};
       if (!data.cityDistrict) newErrors.cityDistrict = true;
       if (!data.addressVillage || data.addressVillage.trim() === "") newErrors.addressVillage = true;
-      if (!data.receiptPhoto) newErrors.receiptPhoto = true;
+      if (!data.receiptPhoto || data.receiptVerified !== true) newErrors.receiptPhoto = true;
       const phoneRequired = true;
       const smsRequired = requireSmsVerification !== false;
       if (phoneRequired && !data.phone) newErrors.phone = true;
@@ -459,7 +459,7 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
     isCancelling ||
     isCompilingSignature ||
     isQueued ||
-    !(data.model && data.price !== undefined && data.receiptPhoto);
+    !(data.model && data.price !== undefined && data.receiptPhoto && data.receiptVerified === true);
 
   return (
     <motion.div
@@ -589,6 +589,13 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
                     </>
                   )}
                 </Button>
+
+                {!isVerifying && !verificationResult && (
+                  <p className="text-sm text-amber-600 flex items-center gap-1.5 font-medium">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    განაცხადის გასაგზავნად აუცილებელია ქვითრის შემოწმება
+                  </p>
+                )}
 
                 <AnimatePresence>
                   {verificationResult && (
