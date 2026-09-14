@@ -71,7 +71,16 @@ def _search_personal_id(page, personal_id: str) -> str:
     # Pressing Enter does NOT submit this form (verified against the live portal —
     # it fires zero network requests). The site wires submission to the button's
     # click handler specifically, so it must be clicked, not triggered via keyboard.
-    page.locator('input[type="text"]').first.fill(personal_id)
+    #
+    # fill() sets the value in one bulk operation, and on production this was
+    # observed leaving the "ძებნა" button permanently disabled (30s timeout,
+    # confirmed via server logs) — the site's enable-check doesn't reliably
+    # react to it. press_sequentially() dispatches a real keydown/input/keyup
+    # per character, like an actual user typing, which the button responds to.
+    field = page.locator('input[type="text"]').first
+    field.click()
+    field.fill("")
+    field.press_sequentially(personal_id, delay=30)
     page.get_by_role("button", name="ძებნა").click()
     return _wait_for_result_text(page, SEARCH_WAIT_MS)
 
