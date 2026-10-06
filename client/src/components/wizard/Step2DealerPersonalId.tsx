@@ -24,7 +24,7 @@ export function Step2DealerPersonalId({ data, updateData, onNext, onBack, onRest
   const [isChecking, setIsChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isAlreadyUsed, setIsAlreadyUsed] = useState(false);
-  const verified = Boolean(data.dealerPersonalIdVerified);
+  const verified = Boolean(data.dealerPersonalIdVerified) && data.dealerPersonalId === personalId;
   // Cancellation guard: once this step starts unmounting (the parent
   // <AnimatePresence mode="wait"> begins its exit), an in-flight lookup must not run
   // any setState/updateData at all — a late isChecking/error/isAlreadyUsed flip would
@@ -43,9 +43,8 @@ export function Step2DealerPersonalId({ data, updateData, onNext, onBack, onRest
   }, []);
 
   const runLookup = async () => {
-    if (!personalId || isChecking) return;
+    if (!personalId || isChecking || abortRef.current) return;
 
-    abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
     const isCancelled = () => controller.signal.aborted || !isMountedRef.current;
@@ -68,9 +67,8 @@ export function Step2DealerPersonalId({ data, updateData, onNext, onBack, onRest
           lastName: String(data.lastName ?? "").trim(),
           mode: "check",
         },
-        // Server now retries internally on inconclusive portal failures (up to
-        // ~240s worst case), so this must stay comfortably above that ceiling.
-        { withCredentials: true, timeout: 260_000, signal: controller.signal },
+        // Allow time for the existing lookup and the subsequent registry check.
+        { withCredentials: true, timeout: 280_000, signal: controller.signal },
       );
 
       if (isCancelled()) return;
@@ -82,7 +80,7 @@ export function Step2DealerPersonalId({ data, updateData, onNext, onBack, onRest
         personalId?: string;
       };
 
-      const success = Boolean(result.success);
+      const success = result.success === true;
       const message = String(result.message ?? "").trim();
       const isAlreadyUsed = result.status === "already_used";
 
@@ -106,7 +104,7 @@ export function Step2DealerPersonalId({ data, updateData, onNext, onBack, onRest
       const msg =
         typeof errData?.message === "string" && errData.message
           ? errData.message
-          : "შემოწმება ვერ მოხერხდა";
+          : "პირადი ნომრის შემოწმება ვერ მოხერხდა. სცადეთ თავიდან.";
       setError(msg);
       updateData({
         dealerPersonalId: personalId,
@@ -128,6 +126,7 @@ export function Step2DealerPersonalId({ data, updateData, onNext, onBack, onRest
   }, [personalId]);
 
   const handleContinue = () => {
+    if (isChecking || abortRef.current) return;
     if (isAlreadyUsed) return;
     if (!verified) {
       setError("გთხოვთ, დაელოდოთ პირადი ნომრის შემოწმების დასრულებას");

@@ -8,6 +8,7 @@ export type PersonalIdLookupResult = {
   message: string;
   personalId: string;
   portalMessage?: string;
+  error?: string;
 };
 
 const PYTHON_SCRIPT = path.resolve(process.cwd(), "python.py");
@@ -173,7 +174,7 @@ async function runPythonLookupChain(
   };
 }
 
-export async function runPersonalIdLookup(
+async function runPrimaryPersonalIdLookup(
   personalId: string,
   options?: { firstName?: string; lastName?: string; mode?: "check" | "register" },
 ): Promise<PersonalIdLookupResult> {
@@ -218,4 +219,57 @@ export async function runPersonalIdLookup(
   }
 
   return runPythonLookupChain(normalized, firstName, lastName, mode);
+}
+
+// Keep the existing beneficiary lookup authoritative. Only a confirmed miss in
+// check mode needs the additional registry validation; registration is unchanged.
+export async function runPersonalIdLookup(
+  personalId: string,
+  options?: { firstName?: string; lastName?: string; mode?: "check" | "register" },
+): Promise<PersonalIdLookupResult> {
+  const result = await runPrimaryPersonalIdLookup(personalId, options);
+  if (options?.mode === "register" || !result.success || result.status !== "not_found") {
+    return result;
+  }
+
+  const checkedPersonalId = String(personalId).trim().replace(/\s+/g, "");
+  const technicalError: PersonalIdLookupResult = {
+    success: false,
+    status: "error",
+    message: "პირადი ნომრის შემოწმება ვერ მოხერხდა. სცადეთ თავიდან.",
+    personalId: checkedPersonalId,
+  };
+
+  try {
+    const response = await axios.post(
+      "https://n8n.srv1020074.hstgr.cloud/webhook/meorenabiji",
+      { personalNumber: checkedPersonalId },
+      {
+        timeout: 15_000,
+        headers: { "Content-Type": "application/json" },
+        // A duplicate may be reported with a 4xx response. Server failures must
+        // remain technical errors, regardless of their response body.
+        validateStatus: (status) => status >= 200 && status < 500,
+      },
+    );
+    const payload = typeof response.data === "string" ? JSON.parse(response.data) : response.data;
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return technicalError;
+
+    if (response.status < 300 && payload.success === true && payload.status === "success" && !payload.error) {
+      return {
+        success: true,
+        status: "success",
+        message: typeof payload.message === "string" ? payload.message : result.message,
+        personalId: checkedPersonalId,
+      };
+    }
+    if (payload.success === false && payload.status === "error" &&
+        payload.error === "PERSONAL_NUMBER_EXISTS" &&
+        typeof payload.message === "string" && payload.message.trim()) {
+      return { ...technicalError, error: payload.error, message: payload.message };
+    }
+    return technicalError;
+  } catch {
+    return technicalError;
+  }
 }

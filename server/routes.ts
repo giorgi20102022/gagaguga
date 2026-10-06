@@ -929,7 +929,8 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
     // server's global 120s socket timeout (server/index.ts). Extend it for
     // this request only — runPersonalIdLookup still bounds the real worst
     // case via PERSONAL_ID_LOOKUP_TIMEOUT_MS.
-    req.setTimeout(250_000);
+    // Include the additional 15s registry check after a confirmed miss.
+    req.setTimeout(270_000);
     try {
       const personalId = String(req.body?.personalId ?? "").trim();
       const firstName = String(req.body?.firstName ?? "").trim();
