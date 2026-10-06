@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
-import { CheckCircle2, Loader2, RotateCcw, Search, ShieldAlert, Ban } from "lucide-react";
+import { CheckCircle2, Loader2, Search, ShieldAlert, Ban } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import axios from "axios";
 
@@ -17,7 +17,7 @@ interface Props {
 }
 
 const ALREADY_USED_MESSAGE =
-  "ეს მომხმარებელი უკვე სარგებლობს სუბსიდირების პროგრამით";
+  "ეს ადამიანი უკვე სარგებლობს სუბსიდირების პროგრამით";
 
 export function Step2DealerPersonalId({ data, updateData, onNext, onBack, onRestart }: Props) {
   const personalId = String(data.idNumber ?? "").trim();
@@ -76,13 +76,14 @@ export function Step2DealerPersonalId({ data, updateData, onNext, onBack, onRest
       const result = res.data as {
         success?: boolean;
         status?: string;
+        error?: string;
         message?: string;
         personalId?: string;
       };
 
-      const success = result.success === true;
+      const isAlreadyUsed = result.error === "PERSONAL_NUMBER_EXISTS" || result.status === "already_used";
+      const success = result.success === true && !isAlreadyUsed;
       const message = String(result.message ?? "").trim();
-      const isAlreadyUsed = result.status === "already_used";
 
       updateData({
         dealerPersonalId: result.personalId || personalId,
@@ -100,7 +101,9 @@ export function Step2DealerPersonalId({ data, updateData, onNext, onBack, onRest
       }
     } catch (err: unknown) {
       if (isCancelled()) return;
-      const errData = (err as { response?: { data?: { message?: string } } })?.response?.data;
+      const errData = (err as { response?: { data?: { message?: string; error?: string; status?: string } } })?.response?.data;
+      const isAlreadyUsed = errData?.error === "PERSONAL_NUMBER_EXISTS" || errData?.status === "already_used";
+      setIsAlreadyUsed(isAlreadyUsed);
       const msg =
         typeof errData?.message === "string" && errData.message
           ? errData.message
@@ -239,6 +242,13 @@ export function Step2DealerPersonalId({ data, updateData, onNext, onBack, onRest
               <h4 className="text-lg font-bold text-destructive">
                 {ALREADY_USED_MESSAGE}
               </h4>
+              <button
+                type="button"
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); onRestart(); }}
+                className="text-sm text-destructive/80 underline underline-offset-4"
+              >
+                თავიდან დაწყება
+              </button>
             </div>
           </motion.div>
         )}
@@ -264,26 +274,14 @@ export function Step2DealerPersonalId({ data, updateData, onNext, onBack, onRest
             უკან
           </Button>
         )}
-        {isAlreadyUsed ? (
-          <Button
-            type="button"
-            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onRestart(); }}
-            variant="destructive"
-            className={cn("w-full sm:w-auto px-8 h-12 rounded-xl text-base shadow-md sm:ml-auto")}
-          >
-            <RotateCcw className="w-4 h-4 mr-2" />
-            თავიდან დაწყება
-          </Button>
-        ) : (
           <Button
             type="button"
             onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleContinue(); }}
-            disabled={!personalId || isChecking || !verified}
-            className={cn("w-full sm:w-auto px-8 h-12 rounded-xl text-base shadow-md", !isAlreadyUsed && "sm:ml-auto")}
+            disabled={!personalId || isChecking || !verified || isAlreadyUsed}
+            className={cn("w-full sm:w-auto px-8 h-12 rounded-xl text-base shadow-md sm:ml-auto")}
           >
             გაგრძელება
           </Button>
-        )}
       </div>
     </motion.div>
   );
