@@ -81,11 +81,25 @@ test("waits for the primary lookup before posting, and for the registry before s
 });
 
 test("registry duplicates block continuation and preserve the Georgian message", async () => {
-  for (const status of [200, 409]) {
+  for (const status of [200, 409, 503]) {
     const calls = mockLookup(missing, duplicate, status);
     const result = await runPersonalIdLookup(personalId);
     assert.deepEqual(result, { ...duplicate, personalId });
     assert.deepEqual(calls, [primaryUrl, registryUrl]);
+  }
+});
+
+test("duplicate error code takes precedence over other payload flags", async () => {
+  mockLookup(missing, { ...available, error: duplicate.error, message: duplicate.message }, 409);
+  assert.deepEqual(await runPersonalIdLookup(personalId), { ...duplicate, personalId });
+});
+
+test("usable JSON validation payloads are parsed regardless of HTTP status", async () => {
+  mockLookup(missing, JSON.stringify(duplicate), 409);
+  assert.deepEqual(await runPersonalIdLookup(personalId), { ...duplicate, personalId });
+  for (const status of [200, 400, 500]) {
+    mockLookup(missing, JSON.stringify(available), status);
+    assert.deepEqual(await runPersonalIdLookup(personalId), { ...available, personalId });
   }
 });
 
@@ -96,8 +110,9 @@ test("network, timeout, invalid JSON and unexpected responses fail closed", asyn
     ["{invalid JSON", 200], [null, 200], [[], 200], [{}, 200],
     [{ success: "true", status: "success" }, 200],
     [{ success: true, status: "error" }, 200],
-    [{ ...available, error: "PERSONAL_NUMBER_EXISTS" }, 200],
-    [available, 500], [duplicate, 503], [available, 400],
+    [{ error: "PERSONAL_NUMBER_EXISTS" }, 409],
+    ["{invalid JSON", 409], ["<html>Server error</html>", 503],
+    [{ message: "Unexpected server error" }, 500], [{}, 409],
   ] as const) {
     mockLookup(missing, payload, status);
     const result = await runPersonalIdLookup(personalId);

@@ -247,26 +247,27 @@ export async function runPersonalIdLookup(
       {
         timeout: 15_000,
         headers: { "Content-Type": "application/json" },
-        // A duplicate may be reported with a 4xx response. Server failures must
-        // remain technical errors, regardless of their response body.
-        validateStatus: (status) => status >= 200 && status < 500,
+        // Inspect business-validation payloads before interpreting HTTP errors.
+        validateStatus: () => true,
       },
     );
+    // Temporary diagnostics for the actual n8n response.
+    console.log('[Dealer Personal ID Lookup] n8n HTTP status:', response.status);
     const payload = typeof response.data === "string" ? JSON.parse(response.data) : response.data;
+    console.log('[Dealer Personal ID Lookup] n8n response:', payload);
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) return technicalError;
 
-    if (response.status < 300 && payload.success === true && payload.status === "success" && !payload.error) {
+    if (payload.error === "PERSONAL_NUMBER_EXISTS" &&
+        typeof payload.message === "string" && payload.message.trim()) {
+      return { ...technicalError, error: payload.error, message: payload.message };
+    }
+    if (payload.success === true && payload.status === "success" && !payload.error) {
       return {
         success: true,
         status: "success",
         message: typeof payload.message === "string" ? payload.message : result.message,
         personalId: checkedPersonalId,
       };
-    }
-    if (payload.success === false && payload.status === "error" &&
-        payload.error === "PERSONAL_NUMBER_EXISTS" &&
-        typeof payload.message === "string" && payload.message.trim()) {
-      return { ...technicalError, error: payload.error, message: payload.message };
     }
     return technicalError;
   } catch {
