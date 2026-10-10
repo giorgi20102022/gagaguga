@@ -32,12 +32,6 @@ function unwrapN8nRecord(raw: unknown): Record<string, unknown> | null {
   return record;
 }
 
-/** Strips the "Reason: [...]" wrapper n8n uses; falls back to the raw text if it doesn't match. */
-function cleanN8nMessage(message: string): string {
-  const match = message.trim().match(/^Reason:\s*\[([\s\S]*)\]$/i);
-  return match ? match[1].trim() : message.trim();
-}
-
 /** Extracts the business-logic error n8n reports via `{ success: false, message }`. */
 function extractN8nBusinessError(raw: unknown): string | null {
   let current: unknown = raw;
@@ -48,7 +42,7 @@ function extractN8nBusinessError(raw: unknown): string | null {
 
   const record = current as Record<string, unknown>;
   if (record.success === false && typeof record.message === "string" && record.message.trim()) {
-    return cleanN8nMessage(record.message);
+    return record.message;
   }
 
   return null;
@@ -125,7 +119,7 @@ async function postPassportFormData(formData: FormData, signal: AbortSignal): Pr
       const errText = await proxyRes.text().catch(() => "");
       if (errText) message = errText;
     }
-    throw new Error(cleanN8nMessage(message));
+    throw new Error(message);
   }
 
   try {

@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { ShieldAlert, ScanLine, CheckCircle } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { MediaUploadZone } from "@/components/ui/MediaUploadZone";
+import { DocumentValidationDialog } from "./DocumentValidationDialog";
 import { extractPassportOcr } from "@/lib/passportOcr";
 
 interface Props {
@@ -22,6 +23,7 @@ function Step1IdentityInner({ data, updateData, onNext }: Props) {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [fieldErrorBanner, setFieldErrorBanner] = useState<string | null>(null);
   const passportOcrAbortRef = useRef<AbortController | null>(null);
+  const scanInFlightRef = useRef(false);
   const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Guards every async state update so nothing re-renders this subtree after the
   // parent <AnimatePresence> has started detaching it.
@@ -117,7 +119,7 @@ function Step1IdentityInner({ data, updateData, onNext }: Props) {
         const msg =
           err instanceof Error ? err.message : "მონაცემების ამოკითხვა ვერ მოხერხდა";
         console.error("[Passport OCR] Webhook failed:", err);
-        setError(msg + ". შეგიძლიათ შეავსოთ ველები ხელით.");
+        setError(msg);
       } finally {
         if (passportOcrAbortRef.current === controller) {
           passportOcrAbortRef.current = null;
@@ -136,7 +138,7 @@ function Step1IdentityInner({ data, updateData, onNext }: Props) {
   );
 
   const handleContinue = async () => {
-    if (isScanning || isPassportScanning) return;
+    if (error || scanInFlightRef.current || isScanning || isPassportScanning) return;
 
     if (!docType) {
       setFieldErrorBanner("გთხოვთ, აირჩიოთ დოკუმენტის ტიპი (ID ბარათი ან პასპორტი)");
@@ -196,6 +198,7 @@ function Step1IdentityInner({ data, updateData, onNext }: Props) {
     }
 
     setError(null);
+    scanInFlightRef.current = true;
     setIsScanning(true);
 
     // Helper to compress image Blob to max 1200px dimension and 0.7 quality
@@ -256,13 +259,13 @@ function Step1IdentityInner({ data, updateData, onNext }: Props) {
         // non-JSON response
       }
 
-      if (!res.ok) {
-        const msg = dataRes?.error || dataRes?.message || (await res.text().catch(() => ""));
+      if (!res.ok || dataRes?.success === false) {
+        const msg = dataRes?.message || dataRes?.error || (await res.text().catch(() => ""));
         throw new Error(typeof msg === "string" && msg ? msg : "მონაცემების ამოკითხვა ვერ მოხერხდა");
       }
 
       if (dataRes && dataRes.error) {
-        setError(dataRes.error);
+        setError(dataRes.message || dataRes.error);
         return;
       }
 
@@ -307,6 +310,7 @@ function Step1IdentityInner({ data, updateData, onNext }: Props) {
     } finally {
       // Still required for the error/early-return paths; idempotent after the
       // success path above, and guarded so it can never fire post-unmount.
+      scanInFlightRef.current = false;
       if (isMountedRef.current) setIsScanning(false);
     }
   };
@@ -508,24 +512,7 @@ function Step1IdentityInner({ data, updateData, onNext }: Props) {
         )}
       </AnimatePresence>
 
-      <AnimatePresence>
-        {error && (
-          <motion.div
-            key="ocr-error"
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.95 }}
-            transition={{ duration: 0.2 }}
-            className="p-4 rounded-xl bg-destructive/10 border border-destructive/20 flex items-start gap-3"
-          >
-            <ShieldAlert className="w-5 h-5 text-destructive mt-0.5 shrink-0" />
-            <div>
-              <h4 className="font-semibold text-destructive">დადასტურება ვერ მოხერხდა</h4>
-              <p className="text-sm text-destructive/80">{error}</p>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <DocumentValidationDialog message={error} onDismiss={() => setError(null)} />
 
       <AnimatePresence>
         {successMessage && (
@@ -550,7 +537,7 @@ function Step1IdentityInner({ data, updateData, onNext }: Props) {
         <Button
           type="button"
           onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleContinue(); }}
-          disabled={!canProceed}
+          disabled={!canProceed || Boolean(error)}
           className="w-full sm:w-auto px-8 h-12 rounded-xl text-base shadow-md"
         >
           {isScanning || isPassportScanning ? "მონაცემები მუშავდება..." : "გაგრძელება"}

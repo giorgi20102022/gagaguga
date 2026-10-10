@@ -5,10 +5,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { cn, fileToBase64 } from "@/lib/utils";
-import { CheckCircle2, AlertCircle } from "lucide-react";
+import { CheckCircle2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import axios from "axios";
 import { MediaUploadZone } from "@/components/ui/MediaUploadZone";
+import { DocumentValidationDialog } from "./DocumentValidationDialog";
 import { generateSignatureBase64 } from "./signatureUtils";
 
 interface Props {
@@ -37,7 +38,7 @@ function getErrorMessage(payload: unknown): string | null {
   const search = (obj: any, visited = new Set<any>()): string | null => {
     if (!obj || typeof obj !== "object" || visited.has(obj)) return null;
     visited.add(obj);
-    const keys = ["verificationError", "error", "message", "msg"];
+    const keys = ["message", "verificationError", "error", "msg"];
     for (const key of keys) {
       if (typeof obj[key] === "string" && obj[key]) return obj[key];
     }
@@ -218,13 +219,12 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
   };
 
   const handleSendPensionerVerification = async () => {
-    if (!pendingPensionerFile || isVerifyingPensioner) return;
+    if (!pendingPensionerFile || isVerifyingPensioner || pensionerAbortRef.current || socialVerifyError || pensionerVerifyError) return;
 
     setIsVerifyingPensioner(true);
     setPensionerVerifyError(null);
     setIsPensionerVerified(false);
 
-    pensionerAbortRef.current?.abort();
     const controller = new AbortController();
     pensionerAbortRef.current = controller;
     const isCancelled = () => controller.signal.aborted || !isMountedRef.current;
@@ -248,6 +248,12 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
       if (isCancelled()) return;
 
       const verified = res.data;
+      if (extractVerificationSuccess(verified) === false && getErrorMessage(verified)) {
+        setIsPensionerVerified(false);
+        setPensionerVerifyError(getErrorMessage(verified));
+        return;
+      }
+
 
       // Safety: if the response is empty or not an object, treat as failure
       if (!verified || typeof verified !== "object") {
@@ -293,9 +299,8 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
       if (isCancelled()) return;
       console.error("Client side failure (pensioner):", err);
       const errData = (err as any)?.response?.data;
-      const georgianMsg = extractVisionApiError(errData);
+      const georgianMsg = getErrorMessage(errData) ?? extractVisionApiError(errData);
       const msg = georgianMsg
-        ?? getErrorMessage(errData)
         ?? ((err as any)?.code === "ECONNABORTED" ? "ვერიფიკაციის მოთხოვნას დრო გაუვიდა" : null)
         ?? "დადასტურება ვერ მოხერხდა";
       setIsPensionerVerified(false);
@@ -311,13 +316,12 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
   };
 
   const handleSendSocialVerification = async () => {
-    if (!pendingSocialFile || isVerifyingSocial) return;
+    if (!pendingSocialFile || isVerifyingSocial || socialAbortRef.current || socialVerifyError || pensionerVerifyError) return;
 
     setIsVerifyingSocial(true);
     setSocialVerifyError(null);
     setIsSocialVerified(false);
 
-    socialAbortRef.current?.abort();
     const controller = new AbortController();
     socialAbortRef.current = controller;
     const isCancelled = () => controller.signal.aborted || !isMountedRef.current;
@@ -343,6 +347,12 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
       if (isCancelled()) return;
 
       const verified = res.data;
+      if (extractVerificationSuccess(verified) === false && getErrorMessage(verified)) {
+        setIsSocialVerified(false);
+        setSocialVerifyError(getErrorMessage(verified));
+        return;
+      }
+
 
       if (!verified || typeof verified !== "object") {
         setIsSocialVerified(false);
@@ -439,6 +449,8 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
   const isPensionerPhotoUploaded = !!data.pensionerCertificate;
 
   const isNextDisabled =
+    Boolean(socialVerifyError || pensionerVerifyError) ||
+    isVerifyingSocial || isVerifyingPensioner ||
     !data.firstName ||
     !data.lastName ||
     !data.idNumber ||
@@ -446,6 +458,7 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
     (isPensionerChecked && (!isPensionerPhotoUploaded || !isPensionerVerified));
 
   const handleNext = async () => {
+    if (socialVerifyError || pensionerVerifyError || socialAbortRef.current || pensionerAbortRef.current) return;
     const newErrors: Record<string, boolean> = {};
     if (!data.firstName) newErrors.firstName = true;
     if (!data.lastName) newErrors.lastName = true;
@@ -635,12 +648,7 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
                       <span className="text-sm font-medium">მონაცემები დაემთხვა</span>
                     </div>
                   )}
-                  {socialVerifyError && !isVerifyingSocial && (
-                    <div className="mt-3 p-3 rounded-xl bg-destructive/10 border border-destructive/20 flex items-center gap-2 text-destructive">
-                      <AlertCircle className="w-5 h-5 shrink-0" />
-                      <span className="text-sm font-medium">{socialVerifyError}</span>
-                    </div>
-                  )}
+
                 </div>
               </motion.div>
             )}
@@ -718,18 +726,21 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
                       <span className="text-sm font-medium">მონაცემები დაემთხვა</span>
                     </div>
                   )}
-                  {pensionerVerifyError && !isVerifyingPensioner && (
-                    <div className="mt-3 p-3 rounded-xl bg-destructive/10 border border-destructive/20 flex items-center gap-2 text-destructive">
-                      <AlertCircle className="w-5 h-5 shrink-0" />
-                      <span className="text-sm font-medium">{pensionerVerifyError}</span>
-                    </div>
-                  )}
+
                 </div>
               </motion.div>
             )}
           </AnimatePresence>
         </div>
       </div>
+
+      <DocumentValidationDialog
+        message={socialVerifyError || pensionerVerifyError}
+        onDismiss={() => {
+          if (socialVerifyError) setSocialVerifyError(null);
+          else setPensionerVerifyError(null);
+        }}
+      />
 
       <div className="pt-6 flex flex-col-reverse sm:flex-row sm:justify-between gap-3">
         <Button type="button" variant="outline" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onBack(); }} disabled={isVerifyingSocial || isVerifyingPensioner} className="w-full sm:w-auto px-8 h-12 rounded-xl text-base">უკან</Button>

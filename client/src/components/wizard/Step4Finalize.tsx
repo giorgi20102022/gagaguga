@@ -12,6 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import { sendN8NRequest } from "@/lib/api";
 import axios from "axios";
 import { MediaUploadZone } from "@/components/ui/MediaUploadZone";
+import { DocumentValidationDialog } from "./DocumentValidationDialog";
 import { useDealerAuth } from "@/hooks/use-dealer-auth";
 
 
@@ -181,6 +182,8 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
   const [errors, setErrors] = useState<Record<string, boolean>>({});
   // State to hold error message from n8n backend
   const [apiError, setApiError] = useState<string | null>(null);
+  const [documentError, setDocumentError] = useState<string | null>(null);
+  const receiptInFlightRef = useRef(false);
   const [isCityOpen, setIsCityOpen] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
   const signatureCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -317,8 +320,9 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
   }, [updateData]);
 
   const handleVerifyReceipt = async () => {
-    if (!data.receiptPhoto || isVerifying) return;
+    if (!data.receiptPhoto || isVerifying || receiptInFlightRef.current || documentError) return;
 
+    receiptInFlightRef.current = true;
     setIsVerifying(true); // derived verificationResult is null while isVerifying=true
 
     // Holds a reason that is safe and useful to show the dealer. Technical throws
@@ -338,7 +342,7 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
         // than a raw body dump that the catch below would replace with generic copy.
         const errBody = await res.json().catch(() => null);
         const serverMessage =
-          (typeof errBody?.message === "string" && errBody.message.trim()) ||
+          (typeof errBody?.message === "string" && errBody.message) ||
           (typeof errBody?.error === "string" && errBody.error.trim()) ||
           null;
         dealerFacingReason = serverMessage;
@@ -347,6 +351,10 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
 
       const result = await res.json();
       if (!isMountedRef.current) return;
+      if (result?.success === false) {
+        dealerFacingReason = typeof result.message === "string" ? result.message : null;
+        throw new Error("Receipt validation failed");
+      }
       const rawAmount = result?.total_amount;
 
       if (rawAmount === null || rawAmount === undefined) {
@@ -370,19 +378,20 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
         receiptVerified: isMatch,
         receiptVerificationMessage: message,
       }); // verificationResult is derived from data after isVerifying flips false
+      if (!isMatch) setDocumentError(message);
     } catch (err) {
       if (!isMountedRef.current) return;
       console.error("[Receipt Verification] Error:", err);
       // Show the reason when we have a dealer-facing one. The hardcoded string that used
       // to be here discarded n8n's specific explanation on every failure.
-      const message = dealerFacingReason
-        ? `❌ ${dealerFacingReason}`
-        : "❌ ვერ მოხერხდა მონაცემების ამოკითხვა";
+      const message = dealerFacingReason || "ვერ მოხერხდა მონაცემების ამოკითხვა";
+      setDocumentError(message);
       updateData({
         receiptVerified: false,
         receiptVerificationMessage: message
       });
     } finally {
+      receiptInFlightRef.current = false;
       if (isMountedRef.current) setIsVerifying(false);
     }
   };
@@ -421,6 +430,7 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
       e.preventDefault();
       e.stopPropagation();
     }
+    if (documentError || receiptInFlightRef.current) return;
     try {
       const newErrors: Record<string, boolean> = {};
       if (!data.cityDistrict) newErrors.cityDistrict = true;
@@ -455,6 +465,7 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
   const isQueued = !!isPendingSubmission;
 
   const isSubmitDisabled =
+    Boolean(documentError) || isVerifying ||
     isSubmitting ||
     isCancelling ||
     isCompilingSignature ||
@@ -598,7 +609,7 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
                 )}
 
                 <AnimatePresence>
-                  {verificationResult && (
+                  {verificationResult?.success && (
                     <div className={cn(
                       "p-4 rounded-xl border flex items-center gap-3 text-left shadow-sm transition-all animate-in fade-in slide-in-from-top-2",
                       verificationResult.success
@@ -756,6 +767,8 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
           </div>
         </div>
       </div>
+
+      <DocumentValidationDialog message={documentError} onDismiss={() => setDocumentError(null)} />
 
       <div className="pt-6 flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-4 border-t border-border mt-8">
         <Button
