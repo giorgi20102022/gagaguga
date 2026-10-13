@@ -181,12 +181,12 @@ export function Step2DealerPersonalId({ data, updateData, onNext, onBack, onRest
             {isChecking ? (
               <>
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                მიმდინარეობს შემოწმება...
+                <span>მიმდინარეობს შემოწმება...</span>
               </>
             ) : (
               <>
                 <Search className="w-4 h-4 mr-2" />
-                ხელახლა შემოწმება
+                <span>ხელახლა შემოწმება</span>
               </>
             )}
           </Button>
