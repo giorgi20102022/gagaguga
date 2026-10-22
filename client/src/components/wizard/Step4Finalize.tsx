@@ -184,6 +184,11 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
   const [apiError, setApiError] = useState<string | null>(null);
   const [documentError, setDocumentError] = useState<string | null>(null);
   const receiptInFlightRef = useRef(false);
+  const receiptAbortRef = useRef<AbortController | null>(null);
+  const [receiptReset, setReceiptReset] = useState(0);
+  const receiptResetRef = useRef(0);
+  const receiptSnapshotRef = useRef(data.receiptPhoto);
+  receiptSnapshotRef.current = data.receiptPhoto;
   const [isCityOpen, setIsCityOpen] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
   const signatureCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -204,21 +209,17 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
     isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
+      receiptAbortRef.current?.abort();
     };
   }, []);
 
   // ─── Derived from formData — survives component re-mounts on back/forward nav ───
   const hasCaptured = !!data.receiptPhoto;
   const { dealer } = useDealerAuth();
-  const effectiveRequireSms = requireSmsVerification ?? dealer?.requireSmsVerification ?? true;
+  const effectiveRequireSms = dealer?.requireSmsVerification ?? true;
   const isBypassed = effectiveRequireSms === false;
   const isSmsVerified = isBypassed || !!data.smsVerified;
 
-  useEffect(() => {
-    if (isBypassed && !data.smsVerified) {
-      updateDataRef.current({ smsVerified: true });
-    }
-  }, [isBypassed, data.smsVerified]);
   const verificationResult: { success: boolean; message: string; amount?: number } | null =
     !isVerifying && data.receiptVerified !== undefined
       ? {
@@ -243,6 +244,12 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
     updateDataRef.current = updateData;
   }, [updateData]);
 
+  useEffect(() => {
+    const requireVerification = () => updateDataRef.current({ smsVerified: false });
+    window.addEventListener("sms-verification-required", requireVerification);
+    return () => window.removeEventListener("sms-verification-required", requireVerification);
+  }, []);
+
   // Stable signature callback — prevents SignaturePreview from re-triggering
   // generate() on every parent re-render, which caused the white-out loop.
   const lastSignatureRef = useRef<string | undefined>(undefined);
@@ -255,7 +262,6 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
 
   const handleSendSms = async () => {
     if (isBypassed) {
-      updateData({ smsVerified: true });
       return;
     }
     if (!data.phone || isSendingSms) return;
@@ -282,12 +288,12 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
     setIsVerifyingSms(true);
     setSmsError(null);
     try {
-      await axios.post("/api/verification/verify-sms", {
+      const verification = await axios.post("/api/verification/verify-sms", {
         phone: data.phone,
         code: smsCode
       });
       if (!isMountedRef.current) return;
-      updateData({ smsVerified: true }); // isSmsVerified is now derived from data.smsVerified
+      updateData({ smsVerified: !verification.data.bypassed });
       toast({
         title: "წარმატება",
         description: "ტელეფონის ნომერი დადასტურებულია",
@@ -300,7 +306,27 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
     }
   };
 
+  useEffect(() => {
+    if (active === false) receiptAbortRef.current?.abort();
+  }, [active]);
+
+  const failReceiptVerification = (message: string) => {
+    receiptAbortRef.current?.abort();
+    receiptAbortRef.current = null;
+    receiptInFlightRef.current = false;
+    setIsVerifying(false);
+    updateData({ receiptPhoto: undefined, receiptVerified: false, receiptVerificationMessage: undefined });
+    setErrors(current => ({ ...current, receiptPhoto: false }));
+    setReceiptReset(++receiptResetRef.current);
+    setDocumentError(message);
+  };
+
   const persistReceipt = useCallback((base64: string) => {
+    if (receiptResetRef.current !== receiptReset) return;
+    receiptAbortRef.current?.abort();
+    receiptAbortRef.current = null;
+    receiptInFlightRef.current = false;
+    setIsVerifying(false);
     if (!base64) {
       // Clear receipt photo state (called by MediaUploadZone clearPreview)
       updateData({
@@ -317,11 +343,19 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
       receiptVerificationMessage: undefined,
     });
     setErrors((prev) => ({ ...prev, receiptPhoto: false }));
-  }, [updateData]);
+  }, [updateData, receiptReset]);
 
   const handleVerifyReceipt = async () => {
     if (!data.receiptPhoto || isVerifying || receiptInFlightRef.current || documentError) return;
 
+    const controller = new AbortController();
+    receiptAbortRef.current = controller;
+    const photo = data.receiptPhoto;
+    const isCurrent = () => isMountedRef.current && !controller.signal.aborted &&
+      receiptAbortRef.current === controller && receiptSnapshotRef.current === photo;
+    const timeout = setTimeout(() => {
+      if (isCurrent()) failReceiptVerification("ქვითრის შემოწმებას დრო გაუვიდა");
+    }, 120_000);
     receiptInFlightRef.current = true;
     setIsVerifying(true); // derived verificationResult is null while isVerifying=true
 
@@ -333,10 +367,12 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
     try {
       const res = await fetch("/api/vision/verify-receipt", {
         method: "POST",
+        signal: controller.signal,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ image: data.receiptPhoto }),
       });
 
+      if (!isCurrent()) return;
       if (!res.ok) {
         // Surface the server's specific reason (which now carries n8n's own text) rather
         // than a raw body dump that the catch below would replace with generic copy.
@@ -350,9 +386,9 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
       }
 
       const result = await res.json();
-      if (!isMountedRef.current) return;
+      if (!isCurrent()) return;
       if (result?.success === false) {
-        dealerFacingReason = typeof result.message === "string" ? result.message : null;
+        dealerFacingReason = typeof result.message === "string" ? result.message : typeof result.error === "string" ? result.error : null;
         throw new Error("Receipt validation failed");
       }
       const rawAmount = result?.total_amount;
@@ -362,10 +398,11 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
         throw new Error("Could not extract amount from response");
       }
 
-      const receiptPrice = Number(String(rawAmount).replace(/[^0-9.\-]/g, "").trim());
+      const amountText = String(rawAmount).replace(/[^0-9.\-]/g, "").trim();
+      const receiptPrice = amountText ? Number(amountText) : NaN;
       const finalPrice = Number(Number(data.finalPayable ?? 0).toFixed(2));
 
-      if (isNaN(receiptPrice)) {
+      if (!Number.isFinite(receiptPrice)) {
         dealerFacingReason = "ქვითარზე თანხა ვერ წაიკითხა. გთხოვთ, ატვირთოთ უფრო მკაფიო ფოტო";
         throw new Error("Could not parse receipt amount: " + String(rawAmount));
       }
@@ -378,21 +415,21 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
         receiptVerified: isMatch,
         receiptVerificationMessage: message,
       }); // verificationResult is derived from data after isVerifying flips false
-      if (!isMatch) setDocumentError(message);
+      if (!isMatch) failReceiptVerification(message);
     } catch (err) {
-      if (!isMountedRef.current) return;
+      if (!isCurrent()) return;
       console.error("[Receipt Verification] Error:", err);
       // Show the reason when we have a dealer-facing one. The hardcoded string that used
       // to be here discarded n8n's specific explanation on every failure.
       const message = dealerFacingReason || "ვერ მოხერხდა მონაცემების ამოკითხვა";
-      setDocumentError(message);
-      updateData({
-        receiptVerified: false,
-        receiptVerificationMessage: message
-      });
+      failReceiptVerification(message);
     } finally {
-      receiptInFlightRef.current = false;
-      if (isMountedRef.current) setIsVerifying(false);
+      clearTimeout(timeout);
+      if (receiptAbortRef.current === controller) {
+        receiptAbortRef.current = null;
+        receiptInFlightRef.current = false;
+        if (isMountedRef.current) setIsVerifying(false);
+      }
     }
   };
 
@@ -437,7 +474,7 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
       if (!data.addressVillage || data.addressVillage.trim() === "") newErrors.addressVillage = true;
       if (!data.receiptPhoto || data.receiptVerified !== true) newErrors.receiptPhoto = true;
       const phoneRequired = true;
-      const smsRequired = requireSmsVerification !== false;
+      const smsRequired = !isBypassed;
       if (phoneRequired && !data.phone) newErrors.phone = true;
       else if (smsRequired && data.phone && !isSmsVerified) newErrors.phone = true;
 
@@ -569,7 +606,8 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
               <Camera className="w-4 h-4 text-primary" /> ქვითრის ფოტო *
             </Label>
             <MediaUploadZone
-              key="receiptPhoto"
+              key={`receiptPhoto-${receiptReset}`}
+              disabled={isVerifying}
               label="ქვითრის ფოტო"
               pickerTitle="ქვითრის ფოტო"
               variant="receipt"
@@ -692,7 +730,7 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
                 value={data.phone || ""}
                 disabled={!isBypassed && isSmsVerified}
                 onChange={(e) => {
-                  updateData({ phone: e.target.value, smsVerified: isBypassed });
+                  updateData({ phone: e.target.value, smsVerified: false });
                   setErrors((prev) => ({ ...prev, phone: false }));
                   setIsSmsSent(false);
                   setSmsError(null);

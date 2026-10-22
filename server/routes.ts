@@ -1,3 +1,5 @@
+import { isSmsBypassActive } from "../shared/smsBypass";
+import { enforceSubmissionSms, issueSmsProof } from "./smsVerification";
 import express, { type Request, Response, NextFunction } from "express";
 import type { Server } from "http";
 import { z } from "zod";
@@ -1258,34 +1260,11 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
   });
 
   // ── SMS Verification ──
-  app.post("/api/verification/send-sms", async (req: Request, res: Response) => {
+  app.post("/api/verification/send-sms", withAuth as any, withDealerOnly as any, async (req: Request, res: Response) => {
     const { phone } = req.body;
 
-    // Backend Safety Guard: check if dealer has requireSmsVerification === false
-    let isBypassed = false;
-    try {
-      const token = req.cookies?.auth_token || req.cookies?.dealer_token || req.cookies?.admin_token;
-      if (token) {
-        const decoded = jwt.verify(token, JWT_SECRET) as any;
-        if (decoded?.dealerId) {
-          const dealer = await storage.getDealerById(decoded.dealerId);
-          if (dealer && dealer.requireSmsVerification === false) {
-            isBypassed = true;
-          }
-        }
-      }
-      if (!isBypassed && req.body?.dealerKey) {
-        const dealerId = await storage.getDealerIdByKey(req.body.dealerKey);
-        if (dealerId) {
-          const dealer = await storage.getDealerById(dealerId);
-          if (dealer && dealer.requireSmsVerification === false) {
-            isBypassed = true;
-          }
-        }
-      }
-    } catch {
-      // Ignore token decode errors
-    }
+    const dealerId = (req as AuthRequest).user!.dealerId!;
+    const isBypassed = isSmsBypassActive(await storage.getDealerById(dealerId));
 
     if (isBypassed) {
       console.log("[SMS] Bypass active for dealer. Instant return without SMS dispatch.");
@@ -1307,7 +1286,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
     const code = Math.floor(1000 + Math.random() * 9000).toString();
     const expires = Date.now() + 5 * 60 * 1000; // 5 minutes
 
-    smsCodes.set(formattedPhone, { code, expires });
+    smsCodes.set(`${dealerId}:${formattedPhone}`, { code, expires });
 
     try {
       const apiKey = process.env.SMS_API_KEY;
@@ -1387,22 +1366,11 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
   // Keep old endpoint as alias for now
   app.post("/api/sms/send", (req, res) => res.redirect(307, "/api/verification/send-sms"));
 
-  app.post("/api/verification/verify-sms", async (req: Request, res: Response) => {
+  app.post("/api/verification/verify-sms", withAuth as any, withDealerOnly as any, async (req: Request, res: Response) => {
     const { phone, code } = req.body;
 
-    let isBypassed = false;
-    try {
-      const token = req.cookies?.auth_token || req.cookies?.dealer_token || req.cookies?.admin_token;
-      if (token) {
-        const decoded = jwt.verify(token, JWT_SECRET) as any;
-        if (decoded?.dealerId) {
-          const dealer = await storage.getDealerById(decoded.dealerId);
-          if (dealer && dealer.requireSmsVerification === false) {
-            isBypassed = true;
-          }
-        }
-      }
-    } catch {}
+    const dealerId = (req as AuthRequest).user!.dealerId!;
+    const isBypassed = isSmsBypassActive(await storage.getDealerById(dealerId));
 
     if (isBypassed) {
       return res.json({ success: true, bypassed: true });
@@ -1415,11 +1383,11 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
       formattedPhone = "995" + formattedPhone;
     }
 
-    const entry = smsCodes.get(formattedPhone);
+    const entry = smsCodes.get(`${dealerId}:${formattedPhone}`);
     if (!entry) return res.status(400).json({ message: "კოდი არ მოიძებნა. გთხოვთ, თავიდან გაგზავნოთ." });
 
-    if (Date.now() > entry.expires) {
-      smsCodes.delete(formattedPhone);
+    if (Date.now() >= entry.expires) {
+      smsCodes.delete(`${dealerId}:${formattedPhone}`);
       return res.status(400).json({ message: "კოდს ვადა გაუვიდა" });
     }
 
@@ -1427,7 +1395,8 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
       return res.status(400).json({ message: "არასწორი კოდი" });
     }
 
-    smsCodes.delete(formattedPhone);
+    smsCodes.delete(`${dealerId}:${formattedPhone}`);
+    res.cookie("sms_verification", issueSmsProof(dealerId, formattedPhone, JWT_SECRET), { ...securityConfig.cookieOptions, httpOnly: true, maxAge: 2 * 60 * 60 * 1000 });
     res.json({ success: true });
   });
 
@@ -1689,6 +1658,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
     }
 
     try {
+      if (!await enforceSubmissionSms(req, res, dealerId, (id) => storage.getDealerById(id), JWT_SECRET)) return;
       let bodyData: Record<string, any> = { ...req.body };
       const reqFiles = (req as any).files;
       if (Array.isArray(reqFiles)) {
@@ -1852,6 +1822,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
     }
 
     try {
+      if (!await enforceSubmissionSms(req, res, dealerId, (id) => storage.getDealerById(id), JWT_SECRET)) return;
       let bodyData: Record<string, any> = { ...req.body };
       const reqFiles = (req as any).files;
       if (Array.isArray(reqFiles)) {
@@ -2303,7 +2274,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
       res.cookie("auth_token", token, securityConfig.cookieOptions);
       res.cookie("dealer_token", token, securityConfig.cookieOptions);
       console.log("[Dealer Login] Success:", { dealerId: dealer.id, dealerKey: dealer.key, email: dealer.email });
-      return res.json({ role: "dealer", dealer: { id: dealer.id, key: dealer.key, name: dealer.name, email: dealer.email, identificationCode: dealer.identificationCode, requireSmsVerification: dealer.requireSmsVerification !== false } });
+      return res.json({ role: "dealer", dealer: { id: dealer.id, key: dealer.key, name: dealer.name, email: dealer.email, identificationCode: dealer.identificationCode, requireSmsVerification: !isSmsBypassActive(dealer), smsBypassExpiresAt: dealer.smsBypassExpiresAt, serverNow: new Date().toISOString() } });
     } catch (err) {
       console.error("[Dealer Login] Error:", err);
       return res.status(500).json({ message: "Login failed" });
@@ -2316,7 +2287,8 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
       if (!dealerId) return res.status(401).json({ message: "Unauthorized" });
       const dealer = await storage.getDealerById(dealerId);
       if (!dealer) return res.status(404).json({ message: "Dealer not found" });
-      return res.json({ id: dealer.id, key: dealer.key, name: dealer.name, email: dealer.email, identificationCode: dealer.identificationCode, requireSmsVerification: dealer.requireSmsVerification !== false });
+      res.set("Cache-Control", "no-store");
+      return res.json({ id: dealer.id, key: dealer.key, name: dealer.name, email: dealer.email, identificationCode: dealer.identificationCode, requireSmsVerification: !isSmsBypassActive(dealer), smsBypassExpiresAt: dealer.smsBypassExpiresAt, serverNow: new Date().toISOString() });
     } catch {
       return res.status(401).json({ message: "Unauthorized" });
     }
@@ -2332,7 +2304,8 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
   app.get("/api/admin/dealers", authenticateAdmin, async (_req: Request, res: Response) => {
     try {
       const allDealers = await storage.getAllDealers();
-      const safe = allDealers.map(({ password: _pwd, ...rest }) => rest);
+      const safe = allDealers.map(({ password: _pwd, ...rest }) => ({ ...rest, requireSmsVerification: !isSmsBypassActive(rest), serverNow: new Date().toISOString() }));
+      res.set("Cache-Control", "no-store");
       res.json(safe);
     } catch (err) {
       res.status(500).json({ message: (err as Error).message });
@@ -2342,6 +2315,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
   app.post("/api/admin/dealers", authenticateAdmin, async (req: Request, res: Response) => {
     try {
       const { name, email, password: rawPassword, identificationCode, requireSmsVerification } = req.body;
+      if (requireSmsVerification !== undefined && typeof requireSmsVerification !== "boolean") return res.status(400).json({ message: "requireSmsVerification must be boolean" });
       if (!name || !email || !rawPassword || !identificationCode) {
         return res.status(400).json({ message: "Name, identification code, email, and password are required" });
       }
@@ -2406,7 +2380,10 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
       }
       if (whatsappNumber !== undefined) update.whatsappNumber = whatsappNumber;
       if (sendToRda !== undefined) update.sendToRda = sendToRda;
-      if (requireSmsVerification !== undefined) update.requireSmsVerification = Boolean(requireSmsVerification);
+      if (requireSmsVerification !== undefined) {
+        if (typeof requireSmsVerification !== "boolean") return res.status(400).json({ message: "requireSmsVerification must be boolean" });
+        update.requireSmsVerification = requireSmsVerification;
+      }
 
       const dealer = await storage.updateDealer(id, update);
       const { password: _, ...safe } = dealer;

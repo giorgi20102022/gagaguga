@@ -8,6 +8,8 @@ interface DealerInfo {
   email: string;
   identificationCode?: string;
   requireSmsVerification?: boolean;
+  smsBypassExpiresAt?: string | null;
+  serverNow?: string;
 }
 
 export function useDealerAuth() {
@@ -17,22 +19,48 @@ export function useDealerAuth() {
   const [, setLocation] = useLocation();
 
   useEffect(() => {
-    fetch("/api/dealer/me", {
-      credentials: "include",
-    })
-      .then((res) => {
+    let disposed = false;
+    let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+    let request = 0;
+    const refresh = async () => {
+      const generation = ++request;
+      try {
+        const res = await fetch("/api/dealer/me", { credentials: "include", cache: "no-store" });
         if (!res.ok) throw new Error("Unauthorized");
-        return res.json();
-      })
-      .then((data) => {
+        const data: DealerInfo = await res.json();
+        if (disposed || generation !== request) return;
+        clearTimeout(deadlineTimer);
+        const remaining = Date.parse(data.smsBypassExpiresAt || "") - Date.parse(data.serverNow || "");
+        if (data.requireSmsVerification === false && Number.isFinite(remaining) && remaining > 0) {
+          deadlineTimer = setTimeout(() => {
+            setDealer(current => current ? { ...current, requireSmsVerification: true } : current);
+            void refresh();
+          }, remaining);
+        } else data.requireSmsVerification = true;
         setDealer(data);
         setIsDealer(true);
-      })
-      .catch(() => {
-        setIsDealer(false);
-        setDealer(null);
-      })
-      .finally(() => setIsLoading(false));
+      } catch {
+        if (!disposed && generation === request) {
+          setDealer(current => current ? { ...current, requireSmsVerification: true } : current);
+        }
+      } finally {
+        if (!disposed) setIsLoading(false);
+      }
+    };
+    const onVisible = () => { if (document.visibilityState === "visible") void refresh(); };
+    void refresh();
+    const interval = setInterval(refresh, 15_000);
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", refresh);
+    window.addEventListener("sms-settings-refresh", refresh);
+    return () => {
+      disposed = true;
+      clearInterval(interval);
+      clearTimeout(deadlineTimer);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("sms-settings-refresh", refresh);
+    };
   }, []);
 
   const login = async (email: string, password: string) => {

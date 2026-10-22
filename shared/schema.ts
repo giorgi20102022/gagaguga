@@ -17,6 +17,7 @@ export const dealers = pgTable("dealers", {
   whatsappNumber: text("whatsapp_number"),
   sendToRda: boolean("send_to_rda").default(false),
   requireSmsVerification: boolean("require_sms_verification").default(true),
+  smsBypassExpiresAt: timestamp("sms_bypass_expires_at", { withTimezone: true }),
   password: text("password"),
   // Plaintext mirror of `password`, shown/edited in the admin dealer panel.
   plainPassword: text("plain_password"),

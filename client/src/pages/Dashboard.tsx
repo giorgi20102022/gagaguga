@@ -92,13 +92,15 @@ export default function Dashboard() {
     return true;
   };
 
-  const nextStep = () => {
-    if (!validateStep(step, formData)) {
+  const nextStep = (verifiedIdentity?: Partial<SubmissionInput>) => {
+    const nextData = verifiedIdentity ? { ...formData, ...verifiedIdentity } : formData;
+    if (!validateStep(step, nextData)) {
       console.warn(`Validation failed for step ${step}`);
       return;
     }
     window.scrollTo({ top: 0, behavior: "smooth" });
-    setStep((s) => Math.min(5, s + 1));
+    if (verifiedIdentity) updateData(verifiedIdentity);
+    setStep((s) => s === step ? Math.min(5, s + 1) : s);
   };
 
   const prevStep = () => {

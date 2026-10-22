@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useAdminAuth } from "@/hooks/use-admin-auth";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -39,6 +39,8 @@ export default function AdminDashboard() {
     whatsappNumber?: string | null;
     sendToRda?: boolean | null;
     requireSmsVerification?: boolean | null;
+    smsBypassExpiresAt?: string | null;
+    serverNow?: string;
     createdAt: string | null;
   }
   const [dealersList, setDealersList] = useState<DealerRecord[]>([]);
@@ -50,6 +52,8 @@ export default function AdminDashboard() {
 
   const [editingDealer, setEditingDealer] = useState<DealerRecord | null>(null);
   const [editDealerForm, setEditDealerForm] = useState({ name: "", identificationCode: "", email: "", password: "", whatsappNumber: "", sendToRda: false, requireSmsVerification: true });
+  const smsToggleDirty = useRef(false);
+  const [serverClockOffset, setServerClockOffset] = useState(0);
   const [showEditPassword, setShowEditPassword] = useState(false);
   const [originalEditPassword, setOriginalEditPassword] = useState("");
 
@@ -98,12 +102,51 @@ export default function AdminDashboard() {
       if (!res.ok) throw new Error("Failed to fetch");
       const data = await res.json();
       setDealersList(data);
+      if (data[0]?.serverNow) setServerClockOffset(Date.parse(data[0].serverNow) - Date.now());
+      setEditingDealer(current => current ? data.find((d: DealerRecord) => d.id === current.id) || current : null);
     } catch (err) {
       toast({ title: "შეცდომა", description: "დილერების ჩატვირთვა ვერ მოხერხდა", variant: "destructive" });
     } finally {
       setIsDealersLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (adminTab !== "dealers") return;
+    const refresh = () => { void fetchDealers(); };
+    const visible = () => { if (document.visibilityState === "visible") refresh(); };
+    const interval = setInterval(refresh, 15_000);
+    document.addEventListener("visibilitychange", visible);
+    window.addEventListener("focus", refresh);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", visible);
+      window.removeEventListener("focus", refresh);
+    };
+  }, [adminTab]);
+
+  useEffect(() => {
+    if (!editingDealer || smsToggleDirty.current) return;
+    const remaining = Date.parse(editingDealer.smsBypassExpiresAt || "") - (Date.now() + serverClockOffset);
+    const active = editingDealer.requireSmsVerification === false && Number.isFinite(remaining) && remaining > 0;
+    setEditDealerForm(form => ({ ...form, requireSmsVerification: !active }));
+    if (!active) return;
+    const expire = () => {
+      if (!smsToggleDirty.current) setEditDealerForm(form => ({ ...form, requireSmsVerification: true }));
+      void fetchDealers();
+    };
+    const timer = setTimeout(expire, remaining);
+    const checkDeadline = () => {
+      if (Date.now() + serverClockOffset >= Date.parse(editingDealer.smsBypassExpiresAt || "")) expire();
+    };
+    document.addEventListener("visibilitychange", checkDeadline);
+    window.addEventListener("focus", checkDeadline);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", checkDeadline);
+      window.removeEventListener("focus", checkDeadline);
+    };
+  }, [editingDealer, serverClockOffset]);
 
   const handleAddDealer = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -144,7 +187,7 @@ export default function AdminDashboard() {
       }
       body.whatsappNumber = editDealerForm.whatsappNumber || null;
       body.sendToRda = editDealerForm.sendToRda;
-      body.requireSmsVerification = editDealerForm.requireSmsVerification;
+      if (smsToggleDirty.current) body.requireSmsVerification = editDealerForm.requireSmsVerification;
 
       const res = await fetch(`/api/admin/dealers/${editingDealer.id}`, {
         method: "PATCH",
@@ -535,6 +578,7 @@ export default function AdminDashboard() {
                               variant="ghost"
                               onClick={() => {
                                 setEditingDealer(d);
+                                smsToggleDirty.current = false;
                                 setEditDealerForm({ name: d.name, identificationCode: String(d.identificationCode || ""), email: d.email || "", password: d.plainPassword || "", whatsappNumber: d.whatsappNumber || "", sendToRda: !!d.sendToRda, requireSmsVerification: d.requireSmsVerification !== false });
                                 setOriginalEditPassword(d.plainPassword || "");
                                 setShowEditPassword(false);
@@ -639,10 +683,20 @@ export default function AdminDashboard() {
                     />
                   </div>
                   <div className="flex items-center justify-between p-3 rounded-xl border border-border bg-muted/30">
-                    <Label className="cursor-pointer">SMS კოდით ავტორიზაციის/ვერიფიკაციის გათიშვა</Label>
+                    <div className="space-y-1 pr-3">
+                      <Label htmlFor="sms-bypass" className="cursor-pointer">SMS კოდით ავტორიზაციის/ვერიფიკაციის გათიშვა</Label>
+                      <p id="sms-bypass-help" className="text-xs text-muted-foreground">ჩართვის შემთხვევაში SMS ვერიფიკაცია გაითიშება მხოლოდ 30 წუთით.</p>
+                      {!editDealerForm.requireSmsVerification && !smsToggleDirty.current && editingDealer?.smsBypassExpiresAt && (
+                        <p className="text-xs text-muted-foreground" aria-live="polite">
+                          SMS ვერიფიკაცია ავტომატურად აღდგება {new Date(editingDealer.smsBypassExpiresAt).toLocaleTimeString("ka-GE", { timeZone: "Asia/Tbilisi", hour: "2-digit", minute: "2-digit", hour12: false })}-ზე
+                        </p>
+                      )}
+                    </div>
                     <Switch
+                      id="sms-bypass"
+                      aria-describedby="sms-bypass-help"
                       checked={!editDealerForm.requireSmsVerification}
-                      onCheckedChange={(checked) => setEditDealerForm({ ...editDealerForm, requireSmsVerification: !checked })}
+                      onCheckedChange={(checked) => { smsToggleDirty.current = true; setEditDealerForm({ ...editDealerForm, requireSmsVerification: !checked }); }}
                     />
                   </div>
                 </div>

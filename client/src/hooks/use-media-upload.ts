@@ -26,6 +26,7 @@ export function useMediaUpload({ storedValue, onPersist, onFileReady, onError }:
   // must not be flipped afterwards, or the busy overlay would mount/unmount inside a
   // subtree the wizard's <AnimatePresence> is already detaching.
   const isMountedRef = useRef(true);
+  const uploadGeneration = useRef(0);
   const onPersistRef = useRef(onPersist);
   const onFileReadyRef = useRef(onFileReady);
   const onErrorRef = useRef(onError);
@@ -57,6 +58,7 @@ export function useMediaUpload({ storedValue, onPersist, onFileReady, onError }:
     isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
+      uploadGeneration.current++;
       revokeObjectUrl(objectUrlRef.current);
     };
   }, []);
@@ -70,6 +72,8 @@ export function useMediaUpload({ storedValue, onPersist, onFileReady, onError }:
       return;
     }
 
+    const generation = ++uploadGeneration.current;
+    const isCurrent = () => isMountedRef.current && uploadGeneration.current === generation;
     try {
       onFileReadyRef.current?.(file);
     } catch (e) {
@@ -87,6 +91,7 @@ export function useMediaUpload({ storedValue, onPersist, onFileReady, onError }:
         console.warn("createPreviewUrl failed:", err);
       }
 
+      if (!isCurrent()) { revokeObjectUrl(instantUrl); return; }
       if (instantUrl) {
         revokeObjectUrl(objectUrlRef.current);
         objectUrlRef.current = instantUrl.startsWith("blob:") ? instantUrl : null;
@@ -101,20 +106,23 @@ export function useMediaUpload({ storedValue, onPersist, onFileReady, onError }:
         throw new Error("Base64 conversion produced empty string");
       }
 
-      // Always persisted, even after unmount — this writes to the wizard's formData
-      // (owned by the always-mounted dashboard), so skipping it would lose the upload.
+      // A reset unmounts this upload zone; abandoned preparation must not restore it.
+      if (!isCurrent()) return;
       onPersistRef.current(base64);
     } catch (err) {
+      if (!isCurrent()) return;
       console.error("File processing error in handleFile:", err);
       const msg = "ფოტოს წაკითხვა ვერ მოხერხდა, სცადეთ თავიდან";
       onErrorRef.current?.(msg);
       toast({ title: "შეცდომა", description: msg, variant: "destructive" });
     } finally {
-      if (isMountedRef.current) setIsPersisting(false);
+      if (isCurrent()) setIsPersisting(false);
     }
   }, []);
 
   const clearPreview = useCallback(() => {
+    uploadGeneration.current++;
+    setIsPersisting(false);
     revokeObjectUrl(objectUrlRef.current);
     objectUrlRef.current = null;
     setPreviewUrl(null);

@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { ShieldAlert, ScanLine, CheckCircle } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useIsPresent } from "framer-motion";
 import { MediaUploadZone } from "@/components/ui/MediaUploadZone";
 import { DocumentValidationDialog } from "./DocumentValidationDialog";
 import { extractPassportOcr } from "@/lib/passportOcr";
@@ -13,23 +13,31 @@ import { extractPassportOcr } from "@/lib/passportOcr";
 interface Props {
   data: Partial<SubmissionInput>;
   updateData: (data: Partial<SubmissionInput>) => void;
-  onNext: () => void;
+  onNext: (verifiedIdentity?: Partial<SubmissionInput>) => void;
 }
 
 function Step1IdentityInner({ data, updateData, onNext }: Props) {
   const [isScanning, setIsScanning] = useState(false);
-  const [isPassportScanning, setIsPassportScanning] = useState(false);
+  const isPassportScanning = isScanning && data.documentType === "passport";
+  const isPresent = useIsPresent();
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [fieldErrorBanner, setFieldErrorBanner] = useState<string | null>(null);
-  const passportOcrAbortRef = useRef<AbortController | null>(null);
+  const ocrAbortRef = useRef<AbortController | null>(null);
   const scanInFlightRef = useRef(false);
+  const navigatedRef = useRef(false);
+  const uploadPendingRef = useRef(new Set<string>());
+  const [pendingUploads, setPendingUploads] = useState(0);
+  const latestRef = useRef({ data, isPresent });
+  latestRef.current = { data, isPresent };
   const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Guards every async state update so nothing re-renders this subtree after the
   // parent <AnimatePresence> has started detaching it.
   const isMountedRef = useRef(true);
 
   const [docType, setDocType] = useState<"id_card" | "passport" | null>(data.documentType as any || null);
+  const [photoReset, setPhotoReset] = useState(0);
+  const photoResetRef = useRef(0);
   const [errors, setErrors] = useState<Record<string, boolean>>({});
   const frontRef = useRef<HTMLDivElement>(null);
   const backRef = useRef<HTMLDivElement>(null);
@@ -61,84 +69,65 @@ function Step1IdentityInner({ data, updateData, onNext }: Props) {
     return () => {
       isMountedRef.current = false;
       clearSuccessTimer();
-      passportOcrAbortRef.current?.abort();
-      passportOcrAbortRef.current = null;
+      ocrAbortRef.current?.abort();
+      ocrAbortRef.current = null;
     };
   }, [clearSuccessTimer]);
 
   const persistField = useCallback(
     (field: "idFront" | "idBack" | "passportPhoto", label: string) => (base64: string) => {
-      updateData({ [field]: base64 });
+      if (photoResetRef.current !== photoReset) return;
+      uploadPendingRef.current.delete(field);
+      if (!isMountedRef.current || !latestRef.current.isPresent) return;
+      setPendingUploads(uploadPendingRef.current.size);
+      ocrAbortRef.current?.abort();
+      updateData({ [field]: base64, firstName: "", lastName: "", idNumber: "", gender: "", expiryDate: "" });
       setErrors((prev) => ({ ...prev, [field]: false }));
       if (base64) {
         showSuccess(label + " წარმატებით აიტვირთა");
       }
     },
-    [updateData, showSuccess],
+    [updateData, showSuccess, photoReset],
   );
 
-  const applyExtractedIdentity = useCallback(
-    (extracted: Partial<SubmissionInput>) => {
-      updateData({
-        firstName: extracted.firstName,
-        lastName: extracted.lastName,
-        idNumber: extracted.idNumber,
-        gender: extracted.gender,
-        expiryDate: extracted.expiryDate,
-      });
-    },
-    [updateData],
-  );
+  // Invalidate immediately when a replacement is selected, before async upload preparation.
+  const invalidateVerification = useCallback(() => {
+    ocrAbortRef.current?.abort();
+    ocrAbortRef.current = null;
+    scanInFlightRef.current = false;
+    navigatedRef.current = false;
+    setIsScanning(false);
+    updateData({ firstName: "", lastName: "", idNumber: "", gender: "", expiryDate: "" });
+  }, [updateData]);
 
-  const runPassportOcr = useCallback(
-    async (file: File) => {
-      passportOcrAbortRef.current?.abort();
-      const controller = new AbortController();
-      passportOcrAbortRef.current = controller;
+  const onFileReady = (field: string) => () => {
+    invalidateVerification();
+    uploadPendingRef.current.add(field);
+    setPendingUploads(uploadPendingRef.current.size);
+  };
 
-      setIsPassportScanning(true);
-      setError(null);
+  useEffect(() => {
+    if (!isPresent) ocrAbortRef.current?.abort();
+  }, [isPresent]);
 
-      try {
-        console.log("[Passport OCR] Dispatching to n8n webhook immediately...");
-        const extracted = await extractPassportOcr(file, controller.signal);
-
-        if (controller.signal.aborted || !isMountedRef.current) return;
-
-        applyExtractedIdentity({
-          firstName: extracted.firstName,
-          lastName: extracted.lastName,
-          idNumber: extracted.idNumber,
-          gender: extracted.gender,
-          expiryDate: extracted.expiryDate,
-        });
-
-        showSuccess("პასპორტიდან მონაცემები წარმატებით ამოიკითხა");
-      } catch (err) {
-        if (controller.signal.aborted || !isMountedRef.current) return;
-        const msg =
-          err instanceof Error ? err.message : "მონაცემების ამოკითხვა ვერ მოხერხდა";
-        console.error("[Passport OCR] Webhook failed:", err);
-        setError(msg);
-      } finally {
-        if (passportOcrAbortRef.current === controller) {
-          passportOcrAbortRef.current = null;
-          if (isMountedRef.current) setIsPassportScanning(false);
-        }
-      }
-    },
-    [applyExtractedIdentity, showSuccess],
-  );
-
-  const onPassportFileReady = useCallback(
-    (file: File) => {
-      void runPassportOcr(file);
-    },
-    [runPassportOcr],
-  );
+  const failPhotoVerification = (message: string) => {
+    invalidateVerification();
+    uploadPendingRef.current.clear();
+    setPendingUploads(0);
+    clearSuccessTimer();
+    setSuccessMessage(null);
+    setFieldErrorBanner(null);
+    setErrors({});
+    updateData({
+      ...(docType === "id_card" ? { idFront: undefined, idBack: undefined } : { passportPhoto: undefined }),
+      signature: undefined, socialVerified: false, pensionerVerified: false,
+    });
+    setPhotoReset(++photoResetRef.current);
+    setError(message);
+  };
 
   const handleContinue = async () => {
-    if (error || scanInFlightRef.current || isScanning || isPassportScanning) return;
+    if (error || scanInFlightRef.current || navigatedRef.current || uploadPendingRef.current.size || !isPresent || isScanning) return;
 
     if (!docType) {
       setFieldErrorBanner("გთხოვთ, აირჩიოთ დოკუმენტის ტიპი (ID ბარათი ან პასპორტი)");
@@ -178,28 +167,28 @@ function Step1IdentityInner({ data, updateData, onNext }: Props) {
       // Settle animated/conditional UI before navigating away (see handleContinue's
       // OCR branch below for the race this prevents).
       clearSuccessTimer();
+      navigatedRef.current = true;
       onNext();
-      return;
-    }
-
-    if (docType === "passport") {
-      if (!data.firstName || !data.lastName) {
-        setError("მონაცემები ვერ ამოიკითხა. გთხოვთ, შეავსოთ ველები ხელით ან ხელახლა ატვირთოთ პასპორტი.");
-        return;
-      }
-      clearSuccessTimer();
-      onNext();
-      return;
-    }
-
-    if (!data.idFront || !data.idBack) {
-      setError("გთხოვთ, ატვირთოთ პირადობის მოწმობის ორივე მხარე");
       return;
     }
 
     setError(null);
     scanInFlightRef.current = true;
     setIsScanning(true);
+    const controller = new AbortController();
+    ocrAbortRef.current = controller;
+    const snapshot = data;
+    const isCurrent = () => isMountedRef.current && latestRef.current.isPresent &&
+      ocrAbortRef.current === controller && !controller.signal.aborted &&
+      latestRef.current.data.documentType === snapshot.documentType &&
+      latestRef.current.data.idFront === snapshot.idFront &&
+      latestRef.current.data.idBack === snapshot.idBack &&
+      latestRef.current.data.passportPhoto === snapshot.passportPhoto;
+    const timeout = setTimeout(() => {
+      if (!isCurrent()) return;
+      controller.abort();
+      failPhotoVerification("მონაცემების ამოკითხვას დრო გაუვიდა");
+    }, 120_000);
 
     // Helper to compress image Blob to max 1200px dimension and 0.7 quality
     const compressBlob = async (blob: Blob): Promise<Blob> => {
@@ -238,61 +227,72 @@ function Step1IdentityInner({ data, updateData, onNext }: Props) {
         return new Blob([buf], { type: mime });
       };
 
-      const formData = new FormData();
-      // Compress images before appending to FormData
-      const frontBlob = await compressBlob(base64ToBlob(data.idFront));
-      const backBlob = await compressBlob(base64ToBlob(data.idBack));
-      formData.append("frontImage", frontBlob, "front.jpg");
-      formData.append("backImage", backBlob, "back.jpg");
+      let extracted: Partial<SubmissionInput>;
+      if (docType === "passport") {
+        const blob = base64ToBlob(data.passportPhoto!);
+        extracted = await extractPassportOcr(new File([blob], "passport.jpg", { type: blob.type }), controller.signal);
+      } else {
+        const formData = new FormData();
+        // Compress images before appending to FormData
+        const frontBlob = await compressBlob(base64ToBlob(data.idFront!));
+        const backBlob = await compressBlob(base64ToBlob(data.idBack!));
+        formData.append("frontImage", frontBlob, "front.jpg");
+        formData.append("backImage", backBlob, "back.jpg");
 
-      const res = await fetch("/api/vision/extract-id", {
-        method: "POST",
-        // Do NOT set Content-Type header — browser must set it with multipart boundary
-        credentials: "include",
-        body: formData,
-      });
+        if (!isCurrent()) return;
+        const res = await fetch("/api/vision/extract-id", {
+          signal: controller.signal,
+          method: "POST",
+          // Do NOT set Content-Type header — browser must set it with multipart boundary
+          credentials: "include",
+          body: formData,
+        });
 
-      let dataRes: any = null;
-      try {
-        dataRes = await res.json();
-      } catch {
-        // non-JSON response
+        let dataRes: any = null;
+        try {
+          dataRes = await res.json();
+        } catch {
+          // non-JSON response
+        }
+
+        if (!isCurrent()) return;
+        if (!res.ok || dataRes?.success === false) {
+          const msg = dataRes?.message || dataRes?.error || (await res.text().catch(() => ""));
+          throw new Error(typeof msg === "string" && msg ? msg : "მონაცემების ამოკითხვა ვერ მოხერხდა");
+        }
+
+        if (dataRes && dataRes.error) {
+          failPhotoVerification(dataRes.message || dataRes.error);
+          return;
+        }
+
+        extracted = {
+          firstName:
+            typeof dataRes?.firstName === "string"
+              ? dataRes.firstName
+              : typeof dataRes?.name === "string"
+              ? dataRes.name
+              : undefined,
+          lastName:
+            typeof dataRes?.lastName === "string"
+              ? dataRes.lastName
+              : typeof dataRes?.surname === "string"
+              ? dataRes.surname
+              : undefined,
+          idNumber: typeof dataRes?.personalId === "string" ? dataRes.personalId : undefined,
+          gender: typeof dataRes?.gender === "string" ? dataRes.gender : undefined,
+          expiryDate: typeof dataRes?.expiryDate === "string" ? dataRes.expiryDate : undefined,
+        };
+
       }
-
-      if (!res.ok || dataRes?.success === false) {
-        const msg = dataRes?.message || dataRes?.error || (await res.text().catch(() => ""));
-        throw new Error(typeof msg === "string" && msg ? msg : "მონაცემების ამოკითხვა ვერ მოხერხდა");
-      }
-
-      if (dataRes && dataRes.error) {
-        setError(dataRes.message || dataRes.error);
+      if (!isCurrent()) return;
+      if (!extracted.firstName || !extracted.lastName || !extracted.idNumber) {
+        failPhotoVerification("მონაცემების ამოკითხვა ვერ მოხერხდა. გთხოვთ, ატვირთოთ უფრო მკაფიო ფოტოები");
         return;
       }
 
-      const extracted: Partial<SubmissionInput> = {
-        firstName:
-          typeof dataRes?.firstName === "string"
-            ? dataRes.firstName
-            : typeof dataRes?.name === "string"
-            ? dataRes.name
-            : undefined,
-        lastName:
-          typeof dataRes?.lastName === "string"
-            ? dataRes.lastName
-            : typeof dataRes?.surname === "string"
-            ? dataRes.surname
-            : undefined,
-        idNumber: typeof dataRes?.personalId === "string" ? dataRes.personalId : undefined,
-        gender: typeof dataRes?.gender === "string" ? dataRes.gender : undefined,
-        expiryDate: typeof dataRes?.expiryDate === "string" ? dataRes.expiryDate : undefined,
-      };
-
-      if (!extracted.firstName || !extracted.lastName) {
-        setError("მონაცემების ამოკითხვა ვერ მოხერხდა. გთხოვთ, ატვირთოთ უფრო მკაფიო ფოტოები");
-        return;
-      }
-
-      applyExtractedIdentity(extracted);
+      // Parent validates and commits this exact result before advancing.
+      // Do not call onNext against the previous render's formData.
       // Settle every piece of local state that drives an animated/conditional child
       // BEFORE navigating. Calling onNext() first would start the parent
       // <AnimatePresence mode="wait"> exit for this whole subtree while isScanning is
@@ -302,16 +302,22 @@ function Step1IdentityInner({ data, updateData, onNext }: Props) {
       // detaching → "Failed to execute 'insertBefore' on 'Node'".
       setIsScanning(false);
       clearSuccessTimer();
-      onNext();
+      navigatedRef.current = true;
+      onNext(extracted);
       return;
     } catch (e) {
+        if (!isCurrent()) return; // Ignore failures for replaced photos or abandoned requests.
         console.error("Client side failure:", e);
-        setError(e instanceof Error ? e.message : "მონაცემების ამოკითხვა ვერ მოხერხდა");
+        failPhotoVerification(e instanceof Error ? e.message : "მონაცემების ამოკითხვა ვერ მოხერხდა");
     } finally {
       // Still required for the error/early-return paths; idempotent after the
       // success path above, and guarded so it can never fire post-unmount.
-      scanInFlightRef.current = false;
-      if (isMountedRef.current) setIsScanning(false);
+      clearTimeout(timeout);
+      if (ocrAbortRef.current === controller) {
+        ocrAbortRef.current = null;
+        scanInFlightRef.current = false;
+        if (isMountedRef.current && latestRef.current.isPresent) setIsScanning(false);
+      }
     }
   };
 
@@ -340,7 +346,7 @@ function Step1IdentityInner({ data, updateData, onNext }: Props) {
         <Button
           type="button"
           variant={docType === "id_card" ? "default" : "outline"}
-          onClick={(e) => { e.preventDefault(); e.stopPropagation(); setDocType("id_card"); updateData({ documentType: "id_card" }); setError(null); }}
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); invalidateVerification(); setDocType("id_card"); updateData({ documentType: "id_card" }); setError(null); }}
           className="h-16 text-lg rounded-2xl"
         >
           ID ბარათი
@@ -348,7 +354,7 @@ function Step1IdentityInner({ data, updateData, onNext }: Props) {
         <Button
           type="button"
           variant={docType === "passport" ? "default" : "outline"}
-          onClick={(e) => { e.preventDefault(); e.stopPropagation(); setDocType("passport"); updateData({ documentType: "passport" }); setError(null); }}
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); invalidateVerification(); setDocType("passport"); updateData({ documentType: "passport" }); setError(null); }}
           className="h-16 text-lg rounded-2xl"
         >
           პასპორტი
@@ -362,12 +368,14 @@ function Step1IdentityInner({ data, updateData, onNext }: Props) {
               <div ref={frontRef}>
                 <Label className={cn("block mb-2 font-semibold", errors.idFront && "text-destructive")}>წინა მხარე</Label>
                 <MediaUploadZone
-                  key="idFront"
+                  key={`idFront-${photoReset}`}
+                  disabled={isScanning}
+                  onFileReady={onFileReady("idFront")}
                   label="წინა მხარე"
                   pickerTitle="პირადობის წინა მხარე"
                   storedValue={data.idFront}
                   onPersist={persistField("idFront", "წინა მხარე")}
-                  onError={setError}
+                  onError={(message) => { uploadPendingRef.current.clear(); setPendingUploads(0); setError(message); }}
                   hasError={errors.idFront}
                   emptyHint="დააჭირეთ წინა მხარის ასატვირთად"
                   uploadedHint="წინა მხარე აიტვირთა (შეცვლა)"
@@ -377,12 +385,14 @@ function Step1IdentityInner({ data, updateData, onNext }: Props) {
               <div ref={backRef}>
                 <Label className={cn("block mb-2 font-semibold", errors.idBack && "text-destructive")}>უკანა მხარე</Label>
                 <MediaUploadZone
-                  key="idBack"
+                  key={`idBack-${photoReset}`}
+                  disabled={isScanning}
+                  onFileReady={onFileReady("idBack")}
                   label="უკანა მხარე"
                   pickerTitle="პირადობის უკანა მხარე"
                   storedValue={data.idBack}
                   onPersist={persistField("idBack", "უკანა მხარე")}
-                  onError={setError}
+                  onError={(message) => { uploadPendingRef.current.clear(); setPendingUploads(0); setError(message); }}
                   hasError={errors.idBack}
                   emptyHint="დააჭირეთ უკანა მხარის ასატვირთად"
                   uploadedHint="უკანა მხარე აიტვირთა (შეცვლა)"
@@ -393,13 +403,14 @@ function Step1IdentityInner({ data, updateData, onNext }: Props) {
             <div className="sm:col-span-2 space-y-4" ref={passportRef}>
               <Label className={cn("block mb-2 font-semibold", errors.passportPhoto && "text-destructive")}>პასპორტის ფოტო</Label>
               <MediaUploadZone
-                key="passportPhoto"
+                key={`passportPhoto-${photoReset}`}
+                disabled={isScanning}
                 label="პასპორტის ფოტო"
                 pickerTitle="პასპორტის ფოტო"
                 storedValue={data.passportPhoto}
                 onPersist={persistField("passportPhoto", "პასპორტის ფოტო")}
-                onFileReady={onPassportFileReady}
-                onError={setError}
+                onFileReady={onFileReady("passportPhoto")}
+                onError={(message) => { uploadPendingRef.current.clear(); setPendingUploads(0); setError(message); }}
                 hasError={errors.passportPhoto}
                 ocrLoading={isPassportScanning}
                 ocrLoadingMessage="მიმდინარეობს მონაცემების ამოკითხვა..."
@@ -537,7 +548,7 @@ function Step1IdentityInner({ data, updateData, onNext }: Props) {
         <Button
           type="button"
           onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleContinue(); }}
-          disabled={!canProceed || Boolean(error)}
+          disabled={!canProceed || pendingUploads > 0 || Boolean(error)}
           className="w-full sm:w-auto px-8 h-12 rounded-xl text-base shadow-md"
         >
           {isScanning || isPassportScanning ? "მონაცემები მუშავდება..." : "გაგრძელება"}

@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { cn, fileToBase64 } from "@/lib/utils";
 import { CheckCircle2 } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useIsPresent } from "framer-motion";
 import axios from "axios";
 import { MediaUploadZone } from "@/components/ui/MediaUploadZone";
 import { DocumentValidationDialog } from "./DocumentValidationDialog";
@@ -121,7 +121,7 @@ function extractVerificationSuccess(payload: unknown): boolean | null {
 export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
   const [isPensionerVerified, setIsPensionerVerified] = useState(() => !!data.pensionerVerified);
   const [isVerifyingPensioner, setIsVerifyingPensioner] = useState(false);
-  const [pensionerVerifyError, setPensionerVerifyError] = useState<string | null>(null);
+  const [pensionerVerifyError, setPensionerErrorMessage] = useState<string | null>(null);
   const [pendingPensionerFile, setPendingPensionerFile] = useState<File | null>(null);
 
   // Helper to compress image Blob to max 1200px dimension and 0.7 JPEG quality
@@ -152,7 +152,7 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
 
   const [isSocialVerified, setIsSocialVerified] = useState(() => !!data.socialVerified);
   const [isVerifyingSocial, setIsVerifyingSocial] = useState(false);
-  const [socialVerifyError, setSocialVerifyError] = useState<string | null>(null);
+  const [socialVerifyError, setSocialErrorMessage] = useState<string | null>(null);
   const [pendingSocialFile, setPendingSocialFile] = useState<File | null>(null);
 
   const [errors, setErrors] = useState<Record<string, boolean>>({});
@@ -178,17 +178,59 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
     };
   }, []);
 
+  const [socialReset, setSocialReset] = useState(0);
+  const socialResetRef = useRef(0);
+  const pensionerResetRef = useRef(0);
+  const [pensionerReset, setPensionerReset] = useState(0);
+  const isPresent = useIsPresent();
+  useEffect(() => {
+    if (!isPresent) {
+      socialAbortRef.current?.abort();
+      pensionerAbortRef.current?.abort();
+    }
+  }, [isPresent]);
+
+  // Error text lives outside the remounted upload zone and survives attachment reset.
+  const setSocialVerifyError = (message: string | null) => {
+    if (message !== null) {
+      socialAbortRef.current?.abort();
+      socialAbortRef.current = null;
+      setPendingSocialFile(null);
+      setIsSocialVerified(false);
+      setIsVerifyingSocial(false);
+      updateData({ socialExtract: undefined, socialVerified: false });
+      setSocialReset(++socialResetRef.current);
+    }
+    setSocialErrorMessage(message);
+  };
+  const setPensionerVerifyError = (message: string | null) => {
+    if (message !== null) {
+      pensionerAbortRef.current?.abort();
+      pensionerAbortRef.current = null;
+      setPendingPensionerFile(null);
+      setIsPensionerVerified(false);
+      setIsVerifyingPensioner(false);
+      updateData({ pensionerCertificate: undefined, pensionerVerified: false });
+      setPensionerReset(++pensionerResetRef.current);
+    }
+    setPensionerErrorMessage(message);
+  };
+
   const persistSocial = useCallback((base64: string) => {
+    if (socialResetRef.current !== socialReset) return;
     updateData({ socialExtract: base64 });
     setErrors((prev) => ({ ...prev, socialExtract: false }));
-  }, [updateData]);
+  }, [updateData, socialReset]);
 
   const persistPensioner = useCallback((base64: string) => {
+    if (pensionerResetRef.current !== pensionerReset) return;
     updateData({ pensionerCertificate: base64 });
     setErrors((prev) => ({ ...prev, pensionerCertificate: false }));
-  }, [updateData]);
+  }, [updateData, pensionerReset]);
 
   const onSocialFileReady = useCallback((file: File) => {
+    socialAbortRef.current?.abort();
+    socialAbortRef.current = null;
     setPendingSocialFile(file);
     setIsVerifyingSocial(false);
     setSocialVerifyError(null);
@@ -196,6 +238,8 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
   }, []);
 
   const onPensionerFileReady = useCallback((file: File) => {
+    pensionerAbortRef.current?.abort();
+    pensionerAbortRef.current = null;
     setPendingPensionerFile(file);
     setIsVerifyingPensioner(false);
     setPensionerVerifyError(null);
@@ -227,8 +271,11 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
 
     const controller = new AbortController();
     pensionerAbortRef.current = controller;
-    const isCancelled = () => controller.signal.aborted || !isMountedRef.current;
+    const isCancelled = () => controller.signal.aborted || !isMountedRef.current || pensionerAbortRef.current !== controller;
 
+    const timeout = setTimeout(() => {
+      if (!isCancelled()) setPensionerVerifyError("ვერიფიკაციის მოთხოვნას დრო გაუვიდა");
+    }, 120_000);
     try {
       // Compress the image before converting to base64 to avoid iOS memory crashes
       const compressedBlob = await compressBlob(pendingPensionerFile!);
@@ -243,6 +290,7 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
       }, {
         withCredentials: true,
         signal: controller.signal,
+        timeout: 120_000,
       });
 
       if (isCancelled()) return;
@@ -265,7 +313,7 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
       const embeddedError = extractVisionApiError(verified);
       if (embeddedError) {
         setIsPensionerVerified(false);
-        setPensionerVerifyError(embeddedError);
+        setPensionerVerifyError(getErrorMessage(verified) || embeddedError);
         return;
       }
 
@@ -306,8 +354,9 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
       setIsPensionerVerified(false);
       setPensionerVerifyError(msg);
     } finally {
-      if (pensionerAbortRef.current === controller) pensionerAbortRef.current = null;
+      clearTimeout(timeout);
       if (!isCancelled()) {
+        pensionerAbortRef.current = null;
         setIsVerifyingPensioner(false);
         // Reset pending file to allow immediate retry without page refresh
         setPendingPensionerFile(null);
@@ -324,8 +373,11 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
 
     const controller = new AbortController();
     socialAbortRef.current = controller;
-    const isCancelled = () => controller.signal.aborted || !isMountedRef.current;
+    const isCancelled = () => controller.signal.aborted || !isMountedRef.current || socialAbortRef.current !== controller;
 
+    const timeout = setTimeout(() => {
+      if (!isCancelled()) setSocialVerifyError("ვერიფიკაციის მოთხოვნას დრო გაუვიდა");
+    }, 120_000);
     try {
       // Compress the image before sending to avoid iOS memory crashes
       const compressedBlob = await compressBlob(pendingSocialFile);
@@ -342,6 +394,7 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
           "Content-Type": "multipart/form-data",
         },
         signal: controller.signal,
+        timeout: 120_000,
       });
 
       if (isCancelled()) return;
@@ -434,8 +487,9 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
       setIsSocialVerified(false);
       setSocialVerifyError(msg);
     } finally {
-      if (socialAbortRef.current === controller) socialAbortRef.current = null;
+      clearTimeout(timeout);
       if (!isCancelled()) {
+        socialAbortRef.current = null;
         setIsVerifyingSocial(false);
         // Reset pending file to allow immediate retry without page refresh
         setPendingSocialFile(null);
@@ -594,6 +648,9 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
                   socialVerified: c ? isSocialVerified : false
                 });
                 if (!c) {
+                  socialAbortRef.current?.abort();
+                  socialAbortRef.current = null;
+                  setIsVerifyingSocial(false);
                   setIsSocialVerified(false);
                   setSocialVerifyError(null);
                   setPendingSocialFile(null);
@@ -612,7 +669,7 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
                 <div className="pt-2" ref={fieldRefs.socialExtract}>
                   <Label className={cn("block mb-2 text-sm", errors.socialExtract && "text-destructive")}>სოციალური ამონაწერის ატვირთვა *</Label>
                   <MediaUploadZone
-                    key="socialExtract"
+                    key={`socialExtract-${socialReset}`}
                     label="სოციალური ამონაწერი"
                     pickerTitle="სოციალური ამონაწერი"
                     variant="row"
@@ -672,6 +729,9 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
                   pensionerVerified: c ? isPensionerVerified : false
                 });
                 if (!c) {
+                  pensionerAbortRef.current?.abort();
+                  pensionerAbortRef.current = null;
+                  setIsVerifyingPensioner(false);
                   setIsPensionerVerified(false);
                   setPensionerVerifyError(null);
                   setPendingPensionerFile(null);
@@ -690,7 +750,7 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
                 <div className="pt-2" ref={fieldRefs.pensionerCertificate}>
                   <Label className={cn("block mb-2 text-sm", errors.pensionerCertificate && "text-destructive")}>პენსიონერის ცნობის ატვირთვა *</Label>
                   <MediaUploadZone
-                    key="pensionerCertificate"
+                    key={`pensionerCertificate-${pensionerReset}`}
                     label="პენსიონერის ცნობა"
                     pickerTitle="პენსიონერის ცნობა"
                     variant="row"

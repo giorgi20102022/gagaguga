@@ -66,6 +66,14 @@ export async function ensureDbBasics() {
     $$;
   `);
 
+  // Persisted UTC deadlines; legacy bypasses fail closed, including PostgreSQL infinity.
+  await dbPool.query(`
+    ALTER TABLE dealers ADD COLUMN IF NOT EXISTS sms_bypass_expires_at TIMESTAMPTZ;
+    UPDATE dealers SET require_sms_verification = true, sms_bypass_expires_at = NULL
+    WHERE require_sms_verification IS NOT TRUE
+      AND (sms_bypass_expires_at IS NULL OR NOT isfinite(sms_bypass_expires_at) OR sms_bypass_expires_at <= clock_timestamp());
+  `);
+
   await dbPool.query(`
     CREATE TABLE IF NOT EXISTS products (
       id SERIAL PRIMARY KEY,

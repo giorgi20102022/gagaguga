@@ -1,3 +1,4 @@
+import { smsBypassUpdate } from "../shared/smsBypass";
 import { db } from "./db";
 import {
   users,
@@ -13,7 +14,7 @@ import {
   type Dealer,
   type InsertDealer,
 } from "@shared/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import session from "express-session";
 import connectPg from "connect-pg-simple";
 import { pool } from "./db";
@@ -86,29 +87,48 @@ export class DatabaseStorage implements IStorage {
     return dealer?.id;
   }
 
+  // Request-driven cleanup works in persistent and serverless deployments. The predicate
+  // is evaluated atomically by PostgreSQL, so it cannot clear a renewed deadline.
+  private async cleanupSmsBypasses() {
+    await db.execute(sql`UPDATE dealers SET require_sms_verification = true, sms_bypass_expires_at = NULL
+      WHERE require_sms_verification IS NOT TRUE
+      AND (sms_bypass_expires_at IS NULL OR NOT isfinite(sms_bypass_expires_at) OR sms_bypass_expires_at <= clock_timestamp())`);
+  }
+
   async getAllDealers(): Promise<Dealer[]> {
+    await this.cleanupSmsBypasses();
     return await db.select().from(dealers);
   }
 
   async getDealerById(id: number): Promise<Dealer | undefined> {
+    await this.cleanupSmsBypasses();
     const [dealer] = await db.select().from(dealers).where(eq(dealers.id, id));
     return dealer;
   }
 
   async getDealerByEmail(email: string): Promise<Dealer | undefined> {
+    await this.cleanupSmsBypasses();
     const [dealer] = await db.select().from(dealers).where(eq(dealers.email, email));
     return dealer;
   }
 
   async createDealer(dealer: { key: string; name: string; identificationCode: string; email: string; password: string; plainPassword?: string; requireSmsVerification?: boolean }): Promise<Dealer> {
-    const [created] = await db.insert(dealers).values(dealer).returning();
+    const [created] = await db.insert(dealers).values({ ...dealer, ...smsBypassUpdate({}, dealer.requireSmsVerification) }).returning();
     return created;
   }
 
   async updateDealer(id: number, update: Partial<Dealer>): Promise<Dealer> {
-    const [updated] = await db.update(dealers).set(update).where(eq(dealers.id, id)).returning();
-    if (!updated) throw new Error("Dealer not found");
-    return updated;
+    return db.transaction(async (tx) => {
+      const [current] = await tx.select().from(dealers).where(eq(dealers.id, id)).for("update");
+      if (!current) throw new Error("Dealer not found");
+      const { requireSmsVerification, smsBypassExpiresAt: _ignored, ...details } = update;
+      const changes = {
+        ...details, ...smsBypassUpdate(current, requireSmsVerification ?? undefined),
+      };
+      if (Object.keys(changes).length === 0) return current;
+      const [updated] = await tx.update(dealers).set(changes).where(eq(dealers.id, id)).returning();
+      return updated;
+    });
   }
 
   async deleteDealerCascade(id: number): Promise<void> {
@@ -260,7 +280,9 @@ class InMemoryStorage implements IStorage {
       password: dealer.password,
       plainPassword: dealer.plainPassword ?? null,
       sendToRda: false,
-      requireSmsVerification: dealer.requireSmsVerification ?? true,
+      requireSmsVerification: true,
+      smsBypassExpiresAt: null,
+      ...smsBypassUpdate({}, dealer.requireSmsVerification),
       createdAt: new Date(),
     } as unknown as Dealer;
 
@@ -273,7 +295,8 @@ class InMemoryStorage implements IStorage {
   async updateDealer(id: number, update: Partial<Dealer>): Promise<Dealer> {
     const existing = this.dealersById.get(id);
     if (!existing) throw new Error("Dealer not found");
-    const merged = { ...existing, ...update } as Dealer;
+    const { requireSmsVerification, smsBypassExpiresAt: _ignored, ...details } = update;
+    const merged = { ...existing, ...details, ...smsBypassUpdate(existing, requireSmsVerification ?? undefined) } as Dealer;
     this.dealersById.set(id, merged);
     this.dealersByKey.set(merged.key, merged);
     if (merged.email) this.dealersByEmail.set(merged.email, merged);

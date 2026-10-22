@@ -102,6 +102,10 @@ async function submitWithAxios(path: string, payload: any): Promise<any> {
     const data = await response.json().catch(() => ({}));
 
     if (!response.ok) {
+      if (data.code === "SMS_VERIFICATION_REQUIRED") {
+        window.dispatchEvent(new Event("sms-settings-refresh"));
+        window.dispatchEvent(new Event("sms-verification-required"));
+      }
       const err: any = new Error(data.message || data.error || `HTTP ${response.status}`);
       err.status = response.status;
       err.response = { data };

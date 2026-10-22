@@ -373,13 +373,15 @@ export default function DealerDashboard() {
     return true;
   };
 
-  const nextStep = () => {
-    if (!validateStep(step, formData)) {
+  const nextStep = (verifiedIdentity?: Partial<SubmissionInput>) => {
+    const nextData = verifiedIdentity ? { ...formData, ...verifiedIdentity } : formData;
+    if (!validateStep(step, nextData)) {
       console.warn(`Validation failed for step ${step}`);
       return;
     }
     window.scrollTo({ top: 0, behavior: "smooth" });
-    setStep((s) => Math.min(5, s + 1));
+    if (verifiedIdentity) updateData(verifiedIdentity);
+    setStep((s) => s === step ? Math.min(5, s + 1) : s);
   };
 
   const prevStep = () => {
@@ -560,6 +562,10 @@ export default function DealerDashboard() {
       const responseData = await response.json().catch(() => ({}));
 
       if (!response.ok) {
+        if (responseData.code === "SMS_VERIFICATION_REQUIRED") {
+          updateData({ smsVerified: false });
+          window.dispatchEvent(new Event("sms-settings-refresh"));
+        }
         const err: any = new Error(responseData.message || responseData.error || `HTTP ${response.status}`);
         err.status = response.status;
         err.response = { data: responseData, status: response.status };
