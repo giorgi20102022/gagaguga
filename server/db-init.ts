@@ -36,6 +36,20 @@ export async function ensureDbBasics() {
 
   // Add columns if they don't exist (for existing databases)
   await dbPool.query(`
+CREATE TABLE IF NOT EXISTS final_submissions (
+  submission_id UUID PRIMARY KEY,
+  dealer_id INTEGER NOT NULL REFERENCES dealers(id),
+  state TEXT NOT NULL CHECK (state IN ('processing', 'completed', 'uncertain')),
+  request_id UUID NOT NULL,
+  endpoint TEXT NOT NULL,
+  dispatch_attempt INTEGER NOT NULL DEFAULT 1,
+  result JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+  `);
+
+  await dbPool.query(`
     DO $$
     BEGIN
       IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='dealers' AND column_name='identification_code') THEN

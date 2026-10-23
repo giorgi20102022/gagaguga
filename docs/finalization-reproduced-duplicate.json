@@ -1,0 +1,39 @@
+{
+  "database": "SIMULATED; no PostgreSQL verification",
+  "runs": [
+    {
+      "dashboard": "dashboard",
+      "scenario": "late original handler after frontend success, before fix",
+      "applicationRequests": 2,
+      "cancelRequests": 0,
+      "recorded": [
+        {
+          "id": "a0431ba8-c08a-4ed0-8b0a-a1018b83dca8",
+          "action": "application"
+        },
+        {
+          "id": "8d1c9682-8560-480e-80e7-300716e68455",
+          "action": "application"
+        }
+      ],
+      "assertionFailed": true
+    },
+    {
+      "dashboard": "workspace",
+      "scenario": "late original handler after frontend success, before fix",
+      "applicationRequests": 2,
+      "cancelRequests": 0,
+      "recorded": [
+        {
+          "id": "e755551f-279a-4362-8828-065faa7be848",
+          "action": "application"
+        },
+        {
+          "id": "b5f71966-647b-40c2-9ced-1eeac6733cd1",
+          "action": "application"
+        }
+      ],
+      "assertionFailed": true
+    }
+  ]
+}

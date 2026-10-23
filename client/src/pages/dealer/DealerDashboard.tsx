@@ -1,3 +1,5 @@
+import { generateSignatureBase64 } from "@/components/wizard/signatureUtils";
+import { applicationId, completeApplication } from "@/lib/finalization";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useDealerAuth } from "@/hooks/use-dealer-auth";
 import { type SubmissionInput } from "@shared/routes";
@@ -29,7 +31,7 @@ const PENDING_SUBMISSION_KEY = "pendingSubmissionId";
 
 function readPendingSubmissionId(): string | null {
   try {
-    return localStorage.getItem(PENDING_SUBMISSION_KEY);
+    return sessionStorage.getItem(PENDING_SUBMISSION_KEY);
   } catch {
     return null; // Safari Private Browsing / storage disabled
   }
@@ -37,92 +39,17 @@ function readPendingSubmissionId(): string | null {
 
 function writePendingSubmissionId(submissionId: string) {
   try {
-    localStorage.setItem(PENDING_SUBMISSION_KEY, submissionId);
+    sessionStorage.setItem(PENDING_SUBMISSION_KEY, submissionId);
   } catch { /* ignore — the in-memory poll still works for this page life */ }
 }
 
 function clearPendingSubmissionId() {
   try {
-    localStorage.removeItem(PENDING_SUBMISSION_KEY);
+    sessionStorage.removeItem(PENDING_SUBMISSION_KEY);
   } catch { /* ignore */ }
 }
 
 // N8N_WEBHOOK_URL constant removed; using sendN8NRequest from api.ts
-
-const SIGNATURE_FONT_FAMILY = "DM Ambrosi UNI";
-const SIGNATURE_INK_COLOR = "#0B2E6B";
-
-function makeSignatureText(firstName: string | undefined, lastName: string | undefined): string {
-  const fn = String(firstName ?? "").trim();
-  const ln = String(lastName ?? "").trim();
-  if (!fn && !ln) return "";
-  if (!ln) return fn;
-  if (!fn) return ln;
-  const firstInitial = fn.charAt(0).toUpperCase();
-  return `${firstInitial}. ${ln}`;
-}
-
-async function ensureSignatureFontLoaded(fontSizePx: number): Promise<void> {
-  const anyDoc = document as any;
-  if (!anyDoc?.fonts?.load) return;
-  try {
-    await Promise.race([
-      Promise.all([
-        anyDoc.fonts.load(`normal ${fontSizePx}px "${SIGNATURE_FONT_FAMILY}"`, "abcdefghijklmnopqrstuvwxyz"),
-        anyDoc.fonts.ready,
-      ]),
-      new Promise((resolve) => setTimeout(resolve, 500)),
-    ]);
-  } catch {
-    // ignore font load errors; canvas will fall back to default font
-  }
-}
-
-async function renderSignaturePngDataUrl(text: string): Promise<string> {
-  const fontSizePx = 72;
-  const padding = 24;
-
-  await ensureSignatureFontLoaded(fontSizePx);
-
-  const measureCanvas = document.createElement("canvas");
-  const measureCtx = measureCanvas.getContext("2d");
-  if (!measureCtx) throw new Error("Canvas 2D context not available");
-
-  measureCtx.font = `normal ${fontSizePx}px "${SIGNATURE_FONT_FAMILY}"`;
-  measureCtx.textBaseline = "alphabetic";
-  const metrics = measureCtx.measureText(text);
-
-  const ascent = Number.isFinite(metrics.actualBoundingBoxAscent)
-    ? metrics.actualBoundingBoxAscent
-    : fontSizePx * 0.8;
-  const descent = Number.isFinite(metrics.actualBoundingBoxDescent)
-    ? metrics.actualBoundingBoxDescent
-    : fontSizePx * 0.2;
-  const textWidth = Math.ceil(metrics.width);
-  const textHeight = Math.ceil(ascent + descent);
-
-  const canvasWidth = textWidth + padding * 2;
-  const canvasHeight = textHeight + padding * 2;
-
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, canvasWidth);
-  canvas.height = Math.max(1, canvasHeight);
-
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("Canvas 2D context not available");
-
-  ctx.fillStyle = "#FFFFFF";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.font = `normal ${fontSizePx}px "${SIGNATURE_FONT_FAMILY}"`;
-  ctx.textBaseline = "alphabetic";
-  ctx.fillStyle = SIGNATURE_INK_COLOR;
-
-  const x = padding;
-  const y = padding + ascent;
-  ctx.fillText(text, x, y);
-
-  return canvas.toDataURL("image/jpeg", 0.5);
-}
 
 function base64ToBlob(base64: string): Blob {
   const parts = base64.split(",");
@@ -151,16 +78,18 @@ export default function DealerDashboard() {
   const { toast } = useToast();
   const [step, setStep] = useState<number>(1);
   const [formData, setFormData] = useState<Partial<SubmissionInput>>({});
+  // Ignore callbacks retained from a replaced/completed draft. Otherwise the
+  // retired session ID would be replaced and the old payload could dispatch again.
+  const activeDraftRef = useRef(formData);
+  activeDraftRef.current = formData;
+  const completedDraftRef = useRef<Partial<SubmissionInput> | null>(null);
   const [isRehydrating, setIsRehydrating] = useState(true);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    // Read before the blanket clear below, which would otherwise wipe the very key that
-    // lets a queued submission survive a reload.
+    // Preserve tracking while resetting photos and the visible wizard on mount.
     const pendingSubmissionId = readPendingSubmissionId();
 
-    try { localStorage.clear(); } catch { /* ignore */ }
-    try { sessionStorage.clear(); } catch { /* ignore */ }
     setFormData({});
     setStep(1);
     setErrorMessage('');
@@ -236,8 +165,6 @@ export default function DealerDashboard() {
       description: "მომხმარებლის განაცხადი წარმატებით დამუშავდა.",
     });
     setSubmissionStatus('success');
-    try { localStorage.clear(); } catch { /* ignore Safari Private Browsing restriction */ }
-    try { sessionStorage.clear(); } catch { /* ignore Safari Private Browsing restriction */ }
     await clearWizardState(WIZARD_STORAGE_KEY);
     // Settle isSubmitting (a prop Step4Finalize renders from) before setStep swaps the
     // step out. Leaving it to the finally block would flip it in a separate render
@@ -278,13 +205,15 @@ export default function DealerDashboard() {
         console.log("[Submit] Queue poll:", { submissionId, status, queuePosition, dispatched });
 
         if (status === "success") {
+          completedDraftRef.current = activeDraftRef.current;
+          if (dealer) completeApplication(dealer.id, submissionId);
           clearPendingSubmissionId();
           // Settle the terminal state BEFORE dropping pendingSubmission. Clearing it first
           // would close the modal (nothing keeps it open until finishSubmissionSuccess
           // gets past its await), and the dealer would see it blink out and reopen.
           await finishSubmissionSuccess();
           setPendingSubmission(null);
-        } else if (status === "failed") {
+        } else if (status === "failed" || status === "uncertain") {
           clearPendingSubmissionId();
           finishSubmissionError(message || "განაცხადის დამუშავება ვერ მოხერხდა");
           setPendingSubmission(null);
@@ -330,7 +259,7 @@ export default function DealerDashboard() {
       clearInterval(interval);
       console.log("[Submit] Queue polling stopped for", submissionId);
     };
-  }, [pendingSubmission?.submissionId, pendingSubmission?.dispatched, finishSubmissionSuccess, finishSubmissionError]);
+  }, [pendingSubmission?.submissionId, pendingSubmission?.dispatched, finishSubmissionSuccess, finishSubmissionError, dealer?.id]);
 
   useEffect(() => {
     if (isStatusModalVisible) {
@@ -389,7 +318,10 @@ export default function DealerDashboard() {
     setStep((s) => Math.max(1, s - 1));
   };
 
+  const submitInFlight = useRef(false);
   const handleSubmit = async (_signatureFile?: File) => {
+    if (activeDraftRef.current !== formData || completedDraftRef.current === formData) return;
+    if (submitInFlight.current || pendingSubmission) return;
     if (!dealer || !dealer.email) {
       toast({
         title: "ავტორიზაციის შეცდომა",
@@ -405,22 +337,14 @@ export default function DealerDashboard() {
       dealer?.name === "გორგია";
     // Clear previous error before new submission
     setErrorMessage('');
+    submitInFlight.current = true;
     setIsSubmitting(true);
-    console.log("[Submit] Full form payload:", formData);
     try {
+      const submissionId = applicationId(dealer.id);
       await registerDealerPersonalIdOnPortal(formData);
 
-      // Get signature as base64 string
-      const signatureText = makeSignatureText(formData.firstName, formData.lastName);
-      let signatureBase64 = formData.signature || "";
-
-      if (!signatureBase64 && signatureText) {
-        try {
-          signatureBase64 = await renderSignaturePngDataUrl(signatureText);
-        } catch (sigErr) {
-          console.warn("[Submit] Signature generation fallback:", sigErr);
-        }
-      }
+      // Regenerate from confirmed names, never reuse a stale/legacy cached signature.
+      const signatureBase64 = await generateSignatureBase64(formData.firstName, formData.lastName);
 
       const itemPrice = Number(formData.price || 0);
       const deliveryFeeVal = Number(formData.deliveryFee || 0);
@@ -447,6 +371,7 @@ export default function DealerDashboard() {
 
       // Build JSON payload conforming to submissionSchema (non-file fields)
       const payload = {
+        submissionId,
         documentType: formData.documentType || "id_card",
         firstName: formData.firstName || "",
         lastName: formData.lastName || "",
@@ -527,27 +452,12 @@ export default function DealerDashboard() {
       if (blobPensionerCertificate) formDataToSend.append("pensionerCertificate", blobPensionerCertificate, "pensionerCertificate.jpg");
       if (blobReceiptPhoto) formDataToSend.append("receiptPhoto", blobReceiptPhoto, "receiptPhoto.jpg");
 
-      // Payload size check & logging
-      try {
-        const payloadJson = JSON.stringify(payload);
-        const sizeKb = Math.round(new Blob([payloadJson]).size / 1024);
-        console.log(`[Submit Payload Size]: ${sizeKb} KB`);
-      } catch {
-        // ignore
-      }
-
-      console.log("[Submit] Supplier fields →", {
-        isGorgiaUser,
-        "formData.supplierName": formData.supplierName,
-        "payload.supplierName": payload.supplierName,
-        "payload.supplierProfile": payload.supplierProfile,
-      });
-
       setLoadingMessage("მონაცემები მოწმდება...");
       
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 120000);
 
+      writePendingSubmissionId(submissionId);
       const response = await fetch("/api/workspace/submit", {
         method: "POST",
         body: formDataToSend,
@@ -613,16 +523,12 @@ export default function DealerDashboard() {
         return;
       }
 
+      completedDraftRef.current = formData;
+      completeApplication(dealer.id, submissionId);
+      clearPendingSubmissionId();
       await finishSubmissionSuccess();
     } catch (error: any) {
-      console.error("[Submit] Native Error Structure:", {
-        name: error?.name,
-        message: error?.message,
-        code: error?.code,
-        stack: error?.stack,
-        response: error?.response?.data,
-        status: error?.response?.status,
-      });
+      console.error("[Submit] Request failed", { status: error?.status, name: error?.name });
 
       // Extract detailed error message
       let detailedMsg = "განაცხადის გაგზავნა ვერ მოხერხდა";
@@ -638,6 +544,7 @@ export default function DealerDashboard() {
 
       finishSubmissionError(detailedMsg);
     } finally {
+      submitInFlight.current = false;
       // Still required for the error path; idempotent after the success path above.
       setIsSubmitting(false);
     }
@@ -648,8 +555,6 @@ export default function DealerDashboard() {
     // still queued from an earlier run — carry its id across the blanket clear.
     const pendingSubmissionId = pendingSubmission ? readPendingSubmissionId() : null;
 
-    try { localStorage.clear(); } catch { /* ignore */ }
-    try { sessionStorage.clear(); } catch { /* ignore */ }
 
     if (pendingSubmissionId) writePendingSubmissionId(pendingSubmissionId);
     await clearWizardState(WIZARD_STORAGE_KEY);

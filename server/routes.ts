@@ -1,3 +1,4 @@
+import { FinalizationService, PostgresFinalizationStore } from "./finalization";
 import { isSmsBypassActive } from "../shared/smsBypass";
 import { enforceSubmissionSms, issueSmsProof } from "./smsVerification";
 import express, { type Request, Response, NextFunction } from "express";
@@ -157,105 +158,6 @@ function withFinalPayableFields(finalPayable: number) {
   };
 }
 
-// Minimum gap required between two submissions reaching the shared n8n webhook, to keep
-// concurrent Google Sheets writes across dealer branches from colliding. Production n8n
-// execution data over ten consecutive real submissions put actual processing at
-// 29.9s–37.3s, so a 60s window clears the slowest observed run with ~23s of margin.
-// Read by every place that decides "is it safe to send now?" — keep it the single source
-// of truth so the checks can never drift apart.
-const SUBMISSION_COLLISION_WINDOW_MS = 60 * 1000;
-
-// Globally accessible timestamp for the last successful execution
-let last_processed_at: number = 0;
-
-// Globally accessible flag to track if a submission is currently in progress
-let submissionProcessing = false;
-
-// Globally accessible flag to track if the retry queue worker loop is running
-let isWorkerRunning = false;
-
-// Retry Queue structure to hold requests intact
-const retryQueue: Array<{
-  payload: any;
-  resolve: (v: any) => void;
-  reject: (e: any) => void;
-  submissionId?: string;
-}> = [];
-
-// Terminal-result store for submissions that were answered with 202/queued, so the client
-// can poll for the real outcome instead of being told the request timed out while the
-// queue worker is still (correctly) holding it in the collision window.
-type SubmissionStatusEntry = {
-  status: "pending" | "success" | "failed";
-  message?: string;
-  data?: any;
-  queuedAt: number;
-  /** When the entry reached a terminal status; the eviction clock runs from here. */
-  settledAt?: number;
-  /**
-   * When executeWebhookSubmission was actually called for this item. Until this is set,
-   * n8n has never seen the payload, so a "cancel" for it would be meaningless at best and
-   * corrupting at worst — it would arrive before the submission it claims to cancel.
-   */
-  dispatchedAt?: number;
-};
-const submissionStatuses = new Map<string, SubmissionStatusEntry>();
-const SUBMISSION_STATUS_TTL_MS = 30 * 60 * 1000;
-
-function setSubmissionStatus(submissionId: string, entry: SubmissionStatusEntry) {
-  // Sweep on write — cheap, and avoids an extra timer holding the process open.
-  // Only settled entries are evicted, and only 30 minutes after they settled: a "pending"
-  // one belongs to a submission still sitting in retryQueue, and with enough dealers ahead
-  // of it that wait legitimately exceeds 30 minutes. Evicting by queuedAt would 404 the
-  // client polling for exactly the submission this whole mechanism exists to track.
-  const cutoff = Date.now() - SUBMISSION_STATUS_TTL_MS;
-  const expired: string[] = [];
-  submissionStatuses.forEach((existing, id) => {
-    if (existing.status !== "pending" && (existing.settledAt ?? existing.queuedAt) < cutoff) {
-      expired.push(id);
-    }
-  });
-  expired.forEach((id) => submissionStatuses.delete(id));
-  submissionStatuses.set(submissionId, entry);
-}
-
-/** Record that this payload has now actually been sent to n8n. */
-function markSubmissionDispatched(submissionId?: string) {
-  if (!submissionId) return;
-  const existing = submissionStatuses.get(submissionId);
-  if (!existing) return;
-  existing.dispatchedAt = Date.now();
-}
-
-/**
- * True only if n8n has actually been sent this payload. Used to gate every rollback
- * cancel: an item still parked in retryQueue has not been dispatched, and cancelling it
- * would send a "cancel" to n8n for a submission it has not received yet — while the queue
- * worker goes on to submit that same payload for real minutes later.
- */
-function wasSubmissionDispatched(submissionId?: string): boolean {
-  // Callers that don't participate in submission tracking keep the previous behavior.
-  if (!submissionId) return true;
-  return submissionStatuses.get(submissionId)?.dispatchedAt != null;
-}
-
-function markSubmissionSettled(
-  submissionId: string,
-  result: { status: "success" | "failed"; message?: string; data?: any },
-) {
-  const existing = submissionStatuses.get(submissionId);
-  setSubmissionStatus(submissionId, {
-    status: result.status,
-    message: result.message,
-    data: result.data,
-    queuedAt: existing?.queuedAt ?? Date.now(),
-    settledAt: Date.now(),
-    // Must survive settling: the submit endpoint's catch block reads it after the
-    // reject callback has already run, to decide whether a rollback cancel is legitimate.
-    dispatchedAt: existing?.dispatchedAt,
-  });
-}
-
 // Helper to mark oven code as used after successful submission
 async function markOvenCodeAsUsed(params: {
   code?: string;
@@ -305,158 +207,36 @@ async function markOvenCodeAsUsed(params: {
 
 // Helper function to execute webhook submission
 async function executeWebhookSubmission(payload: any) {
+  console.info("[finalization]", JSON.stringify({ submissionId: payload.submissionId,
+    requestId: payload.requestId, endpoint: payload.endpoint, dispatchAttempt: 1, outcome: "dispatch_started" }));
   const finalWebhookUrl = process.env.SUBMIT_ALL_DATA_WEBHOOK || "https://n8n.srv1020074.hstgr.cloud/webhook/69083b0e-989b-4fa9-a091-0bd322884e1f";
   return await axios.post(
     finalWebhookUrl,
     payload,
     {
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "Idempotency-Key": payload.submissionId },
+      maxRedirects: 0,
       maxBodyLength: Infinity,
       timeout: 120000
     }
   );
 }
 
-// Helper to send a cancellation request to the same webhook with action "cancel"
-async function cancelWebhookSubmission(originalPayload: any) {
-  const cancelPayload = {
-    ...originalPayload,
-    action: "cancel"
-  };
-  const finalWebhookUrl = process.env.SUBMIT_ALL_DATA_WEBHOOK || "https://n8n.srv1020074.hstgr.cloud/webhook/69083b0e-989b-4fa9-a091-0bd322884e1f";
-  try {
-    await axios.post(finalWebhookUrl, cancelPayload, {
-      headers: { "Content-Type": "application/json" },
-      maxBodyLength: Infinity,
-      timeout: 120000
-    });
-    console.log("[Queue] Cancellation webhook sent successfully.");
-  } catch (cancelErr) {
-    console.error("[Queue] Failed to send cancellation webhook:", cancelErr);
-  }
-}
-
-// Queue worker loop to sequentially process retries in FIFO order
-async function processRetryQueue() {
-  while (retryQueue.length > 0) {
-    const item = retryQueue.shift();
-    if (!item) break;
-
-    const now = Date.now();
-    const elapsed = last_processed_at ? now - last_processed_at : Infinity;
-
-    // Check Scenario A (Safe Zone) for the queued item
-    if (elapsed > SUBMISSION_COLLISION_WINDOW_MS && !submissionProcessing) {
-      submissionProcessing = true;
-      try {
-        console.log(`[Queue Worker] Safe Zone reached. Processing item. Elapsed: ${elapsed === Infinity ? 'Infinity' : Math.round(elapsed / 1000) + 's'}`);
-        // From here on n8n has seen this payload, so a rollback cancel is meaningful.
-        markSubmissionDispatched(item.submissionId);
-        const n8nRes = await executeWebhookSubmission(item.payload);
-        // Validate HTTP status and business success flag
-        const isHttpSuccess = n8nRes && n8nRes.status >= 200 && n8nRes.status < 300;
-        const payloadSuccess = n8nRes?.data?.success !== false && n8nRes?.data?.status !== "error" && n8nRes?.data?.status !== "rejected";
-        if (!isHttpSuccess || !payloadSuccess) {
-          console.warn("[Queue Worker] Webhook response indicated failure. Initiating cancellation.", { status: n8nRes?.status, data: n8nRes?.data });
-          if (wasSubmissionDispatched(item.submissionId)) {
-            await cancelWebhookSubmission(item.payload);
-          }
-          throw new Error(`Webhook submission failed with status ${n8nRes?.status}`);
-        }
-        console.log("[Queue Worker] Submission sent successfully. Status:", n8nRes.status);
-        last_processed_at = Date.now();
-        item.resolve({ success: true, data: n8nRes.data });
-      } catch (err) {
-        console.error("[Queue Worker] Submission failed during execution:", err);
-        // Ensure cancellation was attempted if not already — but never for a payload n8n
-        // was never sent.
-        if (err instanceof Error && !(err.message && err.message.includes('cancellation')) && wasSubmissionDispatched(item.submissionId)) {
-          try {
-            await cancelWebhookSubmission(item.payload);
-          } catch (cErr) {
-            console.error("[Queue Worker] Additional error during cancellation attempt:", cErr);
-          }
-        }
-        item.reject(err);
-      } finally {
-        submissionProcessing = false;
-      }
-
-      // Strict 1-minute delay between individual processing steps
-      console.log("[Queue Worker] Waiting 1 minute before checking the next queue item...");
-      await new Promise(resolve => setTimeout(resolve, 60 * 1000));
-    } else {
-      // Scenario B: Collision window active or busy. Put item back to the front (FIFO) and wait 1 minute.
-      retryQueue.unshift(item);
-      console.log(`[Queue Worker] Lock active. Elapsed: ${elapsed === Infinity ? 'Infinity' : Math.round(elapsed / 1000)}s. Waiting 1 minute before retry...`);
-      await new Promise(resolve => setTimeout(resolve, 60 * 1000));
-    }
-  }
-  isWorkerRunning = false;
-  console.log("[Queue Worker] Queue is empty. Worker stopped.");
-}
-
-// Starts the worker loop if not already running
-function triggerWorker() {
-  if (isWorkerRunning) return;
-  isWorkerRunning = true;
-  console.log("[Queue Worker] Starting sequential retry queue worker...");
-  processRetryQueue().catch(err => {
-    console.error("[Queue Worker] Unexpected error in worker loop:", err);
-    isWorkerRunning = false;
+// Preserve the existing per-process pacing for distinct applications. A database claim
+// happens before entering this queue. A restart never authorizes replay of a claim.
+let dispatchTail = Promise.resolve();
+let lastDispatchFinished = 0;
+function pacedDispatch(payload: any) {
+  const run = dispatchTail.then(async () => {
+    const wait = Math.max(0, 60_000 - (Date.now() - lastDispatchFinished));
+    if (wait) await new Promise(resolve => setTimeout(resolve, wait));
+    try { return await executeWebhookSubmission(payload); }
+    finally { lastDispatchFinished = Date.now(); }
   });
+  dispatchTail = run.then(() => undefined, () => undefined);
+  return run;
 }
-
-// Main logic to evaluate the 2-minute collision window and handle submission
-async function handleSubmission(item: { payload: any; resolve: (v: any) => void; reject: (e: any) => void; submissionId?: string }) {
-  const now = Date.now();
-  const elapsed = last_processed_at ? now - last_processed_at : Infinity;
-
-  // Process immediately if safe zone matches and retryQueue is empty (to preserve FIFO order)
-  if (elapsed > SUBMISSION_COLLISION_WINDOW_MS && !submissionProcessing && retryQueue.length === 0) {
-    submissionProcessing = true;
-    try {
-      console.log(`[Queue] Scenario A (Safe Zone): Processing payload immediately. Elapsed since last: ${elapsed === Infinity ? 'Infinity' : Math.round(elapsed / 1000) + 's'}`);
-      // From here on n8n has seen this payload, so a rollback cancel is meaningful.
-      markSubmissionDispatched(item.submissionId);
-      const n8nRes = await executeWebhookSubmission(item.payload);
-      // Validate HTTP status and business success flag
-      const isHttpSuccess = n8nRes && n8nRes.status >= 200 && n8nRes.status < 300;
-      const payloadSuccess = n8nRes?.data?.success !== false && n8nRes?.data?.status !== "error" && n8nRes?.data?.status !== "rejected";
-      if (!isHttpSuccess || !payloadSuccess) {
-        console.warn("[Queue] Webhook response indicated failure. Initiating cancellation.", { status: n8nRes?.status, data: n8nRes?.data });
-        if (wasSubmissionDispatched(item.submissionId)) {
-          await cancelWebhookSubmission(item.payload);
-        }
-        throw new Error(`Webhook submission failed with status ${n8nRes?.status}`);
-      }
-      console.log("[Queue] Submission sent to n8n successfully. Status:", n8nRes.status);
-      last_processed_at = Date.now();
-      item.resolve({ success: true, data: n8nRes.data });
-    } catch (err) {
-      console.error("[Queue] Submission failed during execution:", err);
-      // Ensure cancellation was attempted if not already — but never for a payload n8n
-      // was never sent.
-      if (err instanceof Error && !(err.message && err.message.includes('cancellation')) && wasSubmissionDispatched(item.submissionId)) {
-        try {
-          await cancelWebhookSubmission(item.payload);
-        } catch (cErr) {
-          console.error("[Queue] Additional error during cancellation attempt:", cErr);
-        }
-      }
-      item.reject(err);
-    } finally {
-      submissionProcessing = false;
-    }
-  } else {
-    // Scenario B: Retry Queue
-    retryQueue.push(item);
-    console.log(`[Queue] Scenario B (Retry Queue): Elapsed (${elapsed === Infinity ? 'Infinity' : Math.round(elapsed / 1000)}s) <= 2min or busy. Placing in retry queue. Queue size: ${retryQueue.length}`);
-
-    // Trigger the sequential central queue worker
-    triggerWorker();
-  }
-}
+const finalizations = new FinalizationService(new PostgresFinalizationStore(pool), pacedDispatch);
 
 export async function registerRoutes(httpServer: Server, app: express.Express) {
   const storage = getStorage();
@@ -1756,36 +1536,9 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
         }
       }
 
-      // Send notification email (optional, replace with real mailer in production)
-      if (branchEmail) {
-        try {
-          const nodemailer = require('nodemailer');
-          const transporter = nodemailer.createTransport({
-            streamTransport: true,
-            newline: 'unix',
-            buffer: true,
-          });
-          await transporter.sendMail({
-            from: 'no-reply@dealerportal.com',
-            to: branchEmail,
-            subject: 'New Submission Received',
-            text: `A new submission has been received.\nBranch: ${input.supplierName}\nSend to RDA: ${sendToRda}\nPayload: ${JSON.stringify(payload, null, 2)}`,
-          });
-        } catch (e) {
-          console.error('[Email] Failed to send email:', e);
-        }
-      }
-
-      handleSubmission({
-        payload,
-        resolve: (v) => {
-          console.log("[Queue] Resolved in background:", v);
-
-        },
-        reject: (e) => console.error("[Queue] Rejected in background:", e)
-      });
-
-      res.status(200).json({ success: true, queued: true });
+      const result = await finalizations.submit({ submissionId: input.submissionId, dealerId,
+        requestId: crypto.randomUUID(), endpoint: req.path }, payload);
+      return res.status(result.httpStatus).json(result.body);
     } catch (err) {
       if (err instanceof z.ZodError) {
         const firstErr = err.errors[0];
@@ -1991,179 +1744,17 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
         dealer_email: input.dealerEmail,
       };
 
-      // Log payload (skip huge base64 strings)
-      const logSafe = Object.fromEntries(
-        Object.entries(payload).map(([k, v]) => [k, typeof v === "string" && (v as string).length > 500 ? `[base64 ${(v as string).length} chars]` : v])
-      );
-      console.log("Final Submission Payload:", JSON.stringify(logSafe, null, 2));
-
-      const submissionId = crypto.randomUUID();
-      setSubmissionStatus(submissionId, { status: "pending", queuedAt: Date.now() });
-
-      // Same accept/reject rule the synchronous path has always used for an n8n reply.
-      const interpretN8nResult = (v: any): { ok: boolean; body?: any; message?: string } => {
-        const n8nBody = v?.data;
-        const errStr = n8nBody?.message || n8nBody?.data?.message || "";
-        const hasSuccessMessage = errStr === "ყველაფერი წარმატებით დასრულდა";
-        const isRdaError = errStr.includes("სოფლის განვითარების") || errStr.includes("ბენეფიციარის") || errStr.includes("IT დეპარტამენტის");
-        if (hasSuccessMessage || isRdaError) return { ok: true, body: n8nBody };
-        return { ok: false, message: errStr || "N8N workflow responded with a non-success status" };
-      };
-
-      const markOvenCodeForThisSubmission = async () => {
+      const result = await finalizations.submit({ submissionId: input.submissionId, dealerId,
+        requestId: crypto.randomUUID(), endpoint: req.path }, payload, async () => {
         if (input.ovenCodeRow == null) return;
-        const branchName = dealerKey === "gorgia" ? input.supplierName : dealerName;
         await markOvenCodeAsUsed({
           code: input.supplierId || input.ovenCode,
           code_row: input.ovenCodeRow,
           dealer_name: dealerName,
-          branch_name: branchName,
-        });
-      };
-
-      // Decide up front which path handleSubmission will take for THIS request. It makes
-      // the same decision synchronously at the top of its own body, and nothing awaits in
-      // between, so this cannot drift.
-      const elapsedSinceLastProcessed = last_processed_at ? Date.now() - last_processed_at : Infinity;
-      const willProcessImmediately =
-        elapsedSinceLastProcessed > SUBMISSION_COLLISION_WINDOW_MS && !submissionProcessing && retryQueue.length === 0;
-
-      if (!willProcessImmediately) {
-        // Scenario B: the queue worker holds this for at least a minute, often much longer
-        // when items are ahead of it. Racing that against a flat 120s timeout reported a
-        // false "Timeout" to a dealer whose submission was still going to be sent. Answer
-        // now with a position, and let the client poll /api/submission-status for the
-        // real outcome.
-        handleSubmission({
-          submissionId,
-          payload,
-          resolve: async (v) => {
-            const result = interpretN8nResult(v);
-            if (!result.ok) {
-              markSubmissionSettled(submissionId, { status: "failed", message: result.message });
-              return;
-            }
-            try {
-              await markOvenCodeForThisSubmission();
-            } catch (codeErr) {
-              console.error("[Queue] Queued submission succeeded but marking the oven code failed:", codeErr);
-              markSubmissionSettled(submissionId, {
-                status: "failed",
-                message: (codeErr as Error)?.message || "კოდი ვერ დაემატა",
-              });
-              return;
-            }
-            markSubmissionSettled(submissionId, {
-              status: "success",
-              message: "ყველაფერი წარმატებით დასრულდა",
-              data: result.body,
-            });
-          },
-          reject: (e) => {
-            console.error("[Queue] Queued submission rejected:", e);
-            markSubmissionSettled(submissionId, {
-              status: "failed",
-              message: (e as Error)?.message || "განაცხადის დამუშავება ვერ მოხერხდა",
-            });
-          },
-        });
-
-        // handleSubmission pushes into retryQueue synchronously, so by now this item is
-        // the last element — its 1-based position is the queue length.
-        return res.status(202).json({
-          success: true,
-          queued: true,
-          submissionId,
-          queuePosition: retryQueue.length,
-        });
-      }
-
-      // Scenario A (safe zone): unchanged — respond synchronously once n8n replies.
-      const submissionPromise = new Promise((resolve, reject) => {
-        handleSubmission({
-          submissionId,
-          payload,
-          resolve: (v) => {
-            const result = interpretN8nResult(v);
-            if (result.ok) {
-              markSubmissionSettled(submissionId, {
-                status: "success",
-                message: "ყველაფერი წარმატებით დასრულდა",
-                data: result.body,
-              });
-              resolve(result.body);
-            } else {
-              markSubmissionSettled(submissionId, { status: "failed", message: result.message });
-              reject(new Error(result.message));
-            }
-          },
-          reject: (e) => {
-            markSubmissionSettled(submissionId, {
-              status: "failed",
-              message: (e as Error)?.message || "განაცხადის დამუშავება ვერ მოხერხდა",
-            });
-            reject(e);
-          }
+          branch_name: dealerKey === "gorgia" ? input.supplierName : dealerName,
         });
       });
-
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error("TIMEOUT")), 120000);
-      });
-
-      let submissionSucceeded = false;
-
-      try {
-        await Promise.race([submissionPromise, timeoutPromise]);
-        submissionSucceeded = true;
-
-        await markOvenCodeForThisSubmission();
-
-
-
-        return res.status(200).json({ success: true, message: "ყველაფერი წარმატებით დასრულდა" });
-      } catch (err: any) {
-        console.error("[Workspace Submit Error] Failed or timed out:", err);
-
-        if (submissionSucceeded) {
-          return res.status(400).json({ success: false, message: err.message || "კოდი ვერ დაემატა" });
-        }
-
-        // Only roll back something n8n has actually been sent. If this item is still
-        // parked in retryQueue, the 120s client timeout has fired while the queue worker
-        // is legitimately holding it — cancelling here would deliver a "cancel" for a
-        // submission n8n has never seen, and the worker would then submit that very same
-        // payload for real minutes later, leaving the downstream sheet cancelled-then-
-        // created for that beneficiary.
-        const stillWaitingInQueue = retryQueue.some((queued) => queued.submissionId === submissionId);
-        if (wasSubmissionDispatched(submissionId)) {
-          try {
-            await cancelWebhookSubmission(payload);
-            console.log("[Workspace Submit Error] Rollback cancel webhook triggered successfully");
-          } catch (cancelErr) {
-            console.error("[Workspace Submit Error] Failed to trigger rollback cancel webhook:", cancelErr);
-          }
-        } else {
-          console.warn(
-            `[Workspace Submit Error] Skipping rollback cancel — submission ${submissionId} was never dispatched to n8n (stillWaitingInQueue=${stillWaitingInQueue}). Leaving it to the queue worker; the client polls /api/submission-status for the real outcome.`,
-          );
-
-          // Hand the client the tracking id instead of an error, so it waits on the queue
-          // rather than showing a failure that makes the dealer re-submit the whole form.
-          return res.status(202).json({
-            success: true,
-            queued: true,
-            submissionId,
-            queuePosition: retryQueue.findIndex((queued) => queued.submissionId === submissionId) + 1,
-          });
-        }
-
-        if (err.message === "TIMEOUT") {
-          return res.status(408).json({ success: false, message: "პროცესის დასრულება დაგვიანდა (Timeout)" });
-        } else {
-          return res.status(400).json({ success: false, message: err.message || "განაცხადის დამუშავება ვერ მოხერხდა" });
-        }
-      }
+      return res.status(result.httpStatus).json(result.body);
     } catch (err) {
       if (err instanceof z.ZodError) {
         const firstErr = err.errors[0];
@@ -2178,30 +1769,21 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
     }
   });
 
-  // Poll target for submissions that were answered with 202/queued. queuePosition is
-  // recomputed from the live queue on every call: it counts down as earlier items are
-  // processed, and reads 0 once this item has been shifted out for execution.
+  // Status is durable and restricted to the authenticated owning dealer.
   app.get("/api/submission-status/:submissionId", async (req: Request, res: Response) => {
-    const submissionId = String(req.params.submissionId ?? "");
-    const entry = submissionStatuses.get(submissionId);
-    if (!entry) return res.status(404).json({ message: "Not found" });
-
-    const queuePosition =
-      entry.status === "pending"
-        ? retryQueue.findIndex((item) => item.submissionId === submissionId) + 1
-        : 0;
-
-    res.json({
-      status: entry.status,
-      message: entry.message,
-      data: entry.data,
-      queuePosition,
-      // Lets the client tell "still waiting in retryQueue" from "sent to n8n, awaiting
-      // its reply" while status is equally "pending" for both. Sourced from the single
-      // dispatchedAt marker set at the executeWebhookSubmission call sites — no second
-      // source of truth for this.
-      dispatched: wasSubmissionDispatched(submissionId),
-    });
+    const token = req.headers.authorization?.split(" ")[1] || req.cookies?.dealer_token || req.cookies?.auth_token;
+    let dealerId: number;
+    try {
+      const decoded = jwt.verify(token || "", JWT_SECRET) as any;
+      if (decoded.role !== "dealer") throw new Error();
+      dealerId = decoded.dealerId;
+    } catch { return res.status(401).json({ message: "Not authenticated" }); }
+    if (!z.string().uuid().safeParse(req.params.submissionId).success) return res.sendStatus(404);
+    try {
+      const result = await finalizations.status(String(req.params.submissionId), dealerId);
+      if (!result) return res.sendStatus(404);
+      return res.json(result);
+    } catch { return res.status(503).json({ message: "Submission status unavailable" }); }
   });
 
   // Public Products Route

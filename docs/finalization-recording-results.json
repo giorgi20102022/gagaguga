@@ -1,0 +1,103 @@
+{
+  "database": "SIMULATED; PostgreSQL verification BLOCKED",
+  "report": [
+    {
+      "dashboard": "dashboard",
+      "scenario": "rapid double-click",
+      "application": 1,
+      "cancel": 0,
+      "id": "e00d1c83-319b-4c48-bc0c-0efb187c27f7"
+    },
+    {
+      "dashboard": "dashboard",
+      "scenario": "20 concurrent handler calls while pending",
+      "application": 1,
+      "cancel": 0,
+      "id": "e00d1c83-319b-4c48-bc0c-0efb187c27f7"
+    },
+    {
+      "dashboard": "dashboard",
+      "scenario": "8 concurrent HTTP requests across both endpoints",
+      "application": 1,
+      "cancel": 0,
+      "id": "e00d1c83-319b-4c48-bc0c-0efb187c27f7"
+    },
+    {
+      "dashboard": "dashboard",
+      "scenario": "client timeout then retry before webhook reply",
+      "application": 1,
+      "cancel": 0,
+      "id": "e00d1c83-319b-4c48-bc0c-0efb187c27f7"
+    },
+    {
+      "dashboard": "dashboard",
+      "scenario": "completed retry via other endpoint",
+      "application": 1,
+      "cancel": 0,
+      "id": "e00d1c83-319b-4c48-bc0c-0efb187c27f7"
+    },
+    {
+      "dashboard": "dashboard",
+      "scenario": "late original handler after frontend success",
+      "application": 1,
+      "cancel": 0,
+      "id": "e00d1c83-319b-4c48-bc0c-0efb187c27f7"
+    },
+    {
+      "dashboard": "dashboard",
+      "scenario": "genuinely new application after success",
+      "application": 2,
+      "cancel": 0,
+      "id": "bba22c2f-b4e6-4a65-a6ad-8c3c0a080f0e"
+    },
+    {
+      "dashboard": "workspace",
+      "scenario": "rapid double-click",
+      "application": 1,
+      "cancel": 0,
+      "id": "c50addfd-1f1f-4811-bdd1-e24d5ab0641d"
+    },
+    {
+      "dashboard": "workspace",
+      "scenario": "20 concurrent handler calls while pending",
+      "application": 1,
+      "cancel": 0,
+      "id": "c50addfd-1f1f-4811-bdd1-e24d5ab0641d"
+    },
+    {
+      "dashboard": "workspace",
+      "scenario": "8 concurrent HTTP requests across both endpoints",
+      "application": 1,
+      "cancel": 0,
+      "id": "c50addfd-1f1f-4811-bdd1-e24d5ab0641d"
+    },
+    {
+      "dashboard": "workspace",
+      "scenario": "client timeout then retry before webhook reply",
+      "application": 1,
+      "cancel": 0,
+      "id": "c50addfd-1f1f-4811-bdd1-e24d5ab0641d"
+    },
+    {
+      "dashboard": "workspace",
+      "scenario": "completed retry via other endpoint",
+      "application": 1,
+      "cancel": 0,
+      "id": "c50addfd-1f1f-4811-bdd1-e24d5ab0641d"
+    },
+    {
+      "dashboard": "workspace",
+      "scenario": "late original handler after frontend success",
+      "application": 1,
+      "cancel": 0,
+      "id": "c50addfd-1f1f-4811-bdd1-e24d5ab0641d"
+    },
+    {
+      "dashboard": "workspace",
+      "scenario": "genuinely new application after success",
+      "application": 2,
+      "cancel": 0,
+      "id": "9985ac67-78c8-4311-9f26-ccfcd2294f5e"
+    }
+  ]
+}

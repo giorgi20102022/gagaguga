@@ -31,20 +31,8 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { GEO_ELGUJA_FONT_BASE64 } from "./geoElgujaBase64";
+import { drawSignature, signatureText as makeSignatureText } from "./signatureUtils";
 
-const convertToAscii = (text: string): string => {
-  const map: Record<string, string> = {
-    'ა': 'a', 'ბ': 'b', 'გ': 'g', 'დ': 'd', 'ე': 'e', 'ვ': 'v', 'ზ': 'z',
-    'თ': 'T', 'ი': 'i', 'კ': 'k', 'ლ': 'l', 'მ': 'm', 'ნ': 'n', 'ო': 'o',
-    'პ': 'p', 'ჟ': 'J', 'რ': 'r', 'ს': 's', 'ტ': 't', 'უ': 'u', 'ფ': 'f',
-    'ქ': 'q', 'ღ': 'R', 'ყ': 'y', 'შ': 'S', 'ჩ': 'C', 'ც': 'c', 'ძ': 'Z',
-    'წ': 'W', 'ჭ': 'w', 'ხ': 'x', 'ჯ': 'j', 'ჰ': 'h'
-  };
-  return text.split('').map(ch => map[ch] || ch).join('');
-};
-
-const cleanBase64 = GEO_ELGUJA_FONT_BASE64.replace(/[\r\n\s]/g, '');
 const GEORGIAN_CITIES = [
   "აბაშა", "ადიგენი", "ამბროლაური", "ასპინძა", "ახალქალაქი", "ახალციხე", "ახმეტა", "ბაღდათი", "ბათუმი", "ბოლნისი", "ბორჯომი", "გარდაბანი", "გორი", "გურჯაანი", "დედოფლისწყარო", "დიდუბე", "დმანისი", "დუშეთი", "ვანი", "ზესტაფონი", "ზუგდიდი", "თეთრიწყარო", "თელავი", "თერჯოლა", "თბილისი", "თიანეთი", "კასპი", "ლაგოდეხი", "ლანჩხუთი", "ლენტეხი", "მარნეული", "მარტვილი", "მესტია", "მცხეთა", "ნინოწმინდა", "ოზურგეთი", "ონი", "რუსთავი", "საგარეჯო", "სამტრედია", "საჩხერე", "სენაკი", "სიღნაღი", "სტეფანწმინდა", "ტყიბული", "ფოთი", "ქარელი", "ქედა", "ქობულეთი", "ქუთაისი", "ყვარელი", "შუახევი", "ჩოხატაური", "ჩხოროწყუ", "ცაგერი", "ცხინვალი", "წალენჯიხა", "წალკა", "წყალტუბო", "ჭიათურა", "ხარაგაული", "ხაშური", "ხელვაჩაური", "ხობი", "ხონი", "ხულო"
 ].sort((a, b) => {
@@ -64,106 +52,38 @@ function SignaturePreview({ firstName, lastName, onGenerate, canvasRef }: {
 
 
 
-  const firstNameVal = firstName?.trim() || "";
-  const lastNameVal = lastName?.trim() || "";
-  const firstInitial = firstNameVal.charAt(0);
-  const signatureText = firstNameVal && lastNameVal ? `${firstInitial}. ${lastNameVal}` : "";
-  const renderedSignature = signatureText; // Use raw Georgian Unicode text
-
+  const text = makeSignatureText(firstName, lastName);
   const onGenerateRef = useRef(onGenerate);
+  onGenerateRef.current = onGenerate;
   useEffect(() => {
-    onGenerateRef.current = onGenerate;
-  }, [onGenerate]);
-
-  const generate = useCallback(async () => {
-    if (!signatureText) return;
-
+    let cancelled = false;
     const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    try {
-      // Ensure the GeoElguja font is loaded before drawing
-      await document.fonts.load('48px "GeoElgujaBase64"');
-
-      ctx.fillStyle = '#FFFFFF';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.font = '48px "GeoElgujaBase64"';
-      (ctx as any).letterSpacing = "0px";
-      (ctx as any).wordSpacing = "0px";
-      ctx.fillStyle = '#0038A8';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(convertToAscii(signatureText), canvas.width / 2, canvas.height / 2);
-
-      onGenerateRef.current(canvas.toDataURL('image/jpeg', 0.5));
-    } catch (err) {
-      console.error('Font load failed:', err);
-      // Fallback to system sans‑serif if custom font fails
-      ctx.fillStyle = '#FFFFFF';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.font = 'italic normal 48px sans-serif';
-      ctx.fillStyle = '#0038A8';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(renderedSignature, canvas.width / 2, canvas.height / 2);
-      onGenerateRef.current(canvas.toDataURL('image/jpeg', 0.5));
+    if (canvas) {
+      // Render offscreen so an old font-load completion cannot overwrite newer names.
+      const pending = document.createElement("canvas");
+      void drawSignature(pending, firstName, lastName).then(base64 => {
+        if (cancelled) return;
+        canvas.width = pending.width;
+        canvas.height = pending.height;
+        canvas.getContext("2d")?.drawImage(pending, 0, 0);
+        onGenerateRef.current(base64);
+      }).catch(() => { if (!cancelled) onGenerateRef.current(""); });
     }
-  }, [signatureText]);
-
-  useEffect(() => {
-    let style = document.getElementById('geo-elguja-base64-font');
-    if (!style) {
-      style = document.createElement('style');
-      style.id = 'geo-elguja-base64-font';
-      style.innerHTML = `@font-face { font-family: 'GeoElgujaBase64'; src: url('data:font/truetype;charset=utf-8;base64,${cleanBase64}') format('truetype'); }`;
-      document.head.appendChild(style);
-    }
-    generate();
-  }, [generate]);
-
-  useEffect(() => {
-    return () => {
-      const el = document.getElementById('geo-elguja-base64-font');
-      if (el) el.remove();
-    };
-  }, []);
-
-  return (<>
-    {/* Font face injected via useEffect */}
+    return () => { cancelled = true; };
+  }, [firstName, lastName, canvasRef]);
+  return <div className="space-y-2">
     <Label className="text-sm font-semibold flex items-center gap-2">
       <ShieldCheck className="w-4 h-4 text-primary" /> ციფრული ხელმოწერა
     </Label>
-    <div className="bg-white/80 backdrop-blur-sm border-2 border-dashed border-primary/20 rounded-xl p-4 flex items-center justify-center min-h-[100px] shadow-inner">
-      <canvas ref={canvasRef} width={400} height={80} className="hidden" />
-      {signatureText && (
-        <div style={{
-          fontFamily: "'GeoElgujaBase64', sans-serif",
-          letterSpacing: '0px',
-          whiteSpace: 'nowrap',
-          fontSize: '36px',
-          color: '#0038A8'
-        }}>
-          <span style={{ display: 'inline-block', marginRight: '5px' }}>
-            {convertToAscii(`${firstInitial}.`)}
-          </span>
-          <span>
-            {convertToAscii(lastNameVal)}
-          </span>
-        </div>
-      )}
-    </div>
-    <p className="text-[10px] text-muted-foreground text-center">ხელმოწერა გენერირებულია ავტომატურად მომხმარებლის სახელის საფუძველზე</p>
-
-  </>);
+    <canvas ref={canvasRef} role="img" aria-label={text} style={{maxWidth:"100%",height:"auto"}} />
+    <p className="text-[10px] text-muted-foreground">ხელმოწერა გენერირებულია ავტომატურად მომხმარებლის სახელის საფუძველზე</p>
+  </div>;
 }
 
 interface Props {
   data: Partial<SubmissionInput>;
   updateData: (data: Partial<SubmissionInput>) => void;
-  onSubmit: (signatureFile?: File) => void;
+  onSubmit: (signatureFile?: File) => void | Promise<void>;
   onBack: () => void;
   isSubmitting: boolean;
   loadingMessage?: string;
@@ -184,6 +104,7 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
   const [apiError, setApiError] = useState<string | null>(null);
   const [documentError, setDocumentError] = useState<string | null>(null);
   const receiptInFlightRef = useRef(false);
+  const finalInFlightRef = useRef(false);
   const receiptAbortRef = useRef<AbortController | null>(null);
   const [receiptReset, setReceiptReset] = useState(0);
   const receiptResetRef = useRef(0);
@@ -467,7 +388,8 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
       e.preventDefault();
       e.stopPropagation();
     }
-    if (documentError || receiptInFlightRef.current) return;
+    if (finalInFlightRef.current || isSubmitting || isPendingSubmission || active === false || documentError || receiptInFlightRef.current) return;
+    finalInFlightRef.current = true;
     try {
       const newErrors: Record<string, boolean> = {};
       if (!data.cityDistrict) newErrors.cityDistrict = true;
@@ -489,9 +411,11 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
         return;
       }
 
-      onSubmit();
+      await onSubmit();
     } catch (err: any) {
-      console.error("[Step4Finalize] Submit trigger error:", err);
+      console.error("[Step4Finalize] Submit trigger error");
+    } finally {
+      finalInFlightRef.current = false;
     }
   };
 

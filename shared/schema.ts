@@ -1,4 +1,4 @@
-import { pgTable, text, serial, boolean, jsonb, integer, timestamp, uniqueIndex, varchar } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, boolean, jsonb, integer, timestamp, uniqueIndex, varchar, uuid } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -105,3 +105,16 @@ export type InsertProduct = z.infer<typeof insertProductSchema>;
 export type InsertBranch = z.infer<typeof insertBranchSchema>;
 export type Dealer = typeof dealers.$inferSelect;
 export type InsertDealer = z.infer<typeof insertDealerSchema>;
+
+// Permanent delivery ledger; do not expire these rows or deduplicate by beneficiary.
+export const finalSubmissions = pgTable("final_submissions", {
+  submissionId: uuid("submission_id").primaryKey(),
+  dealerId: integer("dealer_id").notNull().references(() => dealers.id),
+  state: text("state").notNull(),
+  requestId: uuid("request_id").notNull(),
+  endpoint: text("endpoint").notNull(),
+  dispatchAttempt: integer("dispatch_attempt").notNull().default(1),
+  result: jsonb("result"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});

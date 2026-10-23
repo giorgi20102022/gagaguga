@@ -1,3 +1,4 @@
+import { applicationId, completeApplication } from "@/lib/finalization";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useLocation } from "wouter";
 import { type SubmissionInput } from "@shared/routes";
@@ -25,6 +26,11 @@ export default function Dashboard() {
   const { dealer } = useDealerAuth();
   const [step, setStep] = useState<number>(1);
   const [formData, setFormData] = useState<Partial<SubmissionInput>>({});
+  // A retained callback belongs to its rendered draft, even after success retires
+  // the session ID. It must never allocate a fresh ID for that completed draft.
+  const activeDraftRef = useRef(formData);
+  activeDraftRef.current = formData;
+  const completedDraftRef = useRef<Partial<SubmissionInput> | null>(null);
   const [isRehydrating, setIsRehydrating] = useState(true);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -108,14 +114,23 @@ export default function Dashboard() {
     setStep((s) => Math.max(1, s - 1));
   };
 
+  const submitInFlight = useRef(false);
   const handleSubmit = async () => {
+    if (activeDraftRef.current !== formData || completedDraftRef.current === formData) return;
+    if (submitInFlight.current || !dealer) return;
+    submitInFlight.current = true;
     try {
-      await submitApplication(formData as SubmissionInput);
+      const submissionId = applicationId(dealer.id);
+      await submitApplication({ ...formData, submissionId } as SubmissionInput);
+      completedDraftRef.current = formData;
+      completeApplication(dealer.id, submissionId);
       await clearWizardState(WIZARD_STORAGE_KEY);
       setFormData({});
       setStep(1);
     } catch {
       // Toast already handles error display
+    } finally {
+      submitInFlight.current = false;
     }
   };
 

@@ -1,0 +1,26 @@
+[
+  {
+    "first": "წიწა",
+    "last": "წერეთელი",
+    "text": "წიწა წერეთელი",
+    "encoded": "wiwa wereTeli"
+  },
+  {
+    "first": "ჭიჭა",
+    "last": "ჭავჭავაძე",
+    "text": "ჭიჭა ჭავჭავაძე",
+    "encoded": "WiWa WavWavaZe"
+  },
+  {
+    "first": "წიწა",
+    "last": "ჭიჭინაძე",
+    "text": "წიწა ჭიჭინაძე",
+    "encoded": "wiwa WiWinaZe"
+  },
+  {
+    "first": "  წანა",
+    "last": "ჭია  ",
+    "text": "  წანა ჭია  ",
+    "encoded": "  wana Wia  "
+  }
+]

@@ -1,0 +1,24 @@
+{
+  "fontCoverage": {
+    "w": "w",
+    "W": "W",
+    "\u10ec": null,
+    "\u10ed": null
+  },
+  "pages": 1,
+  "pdfFonts": [
+    {
+      "name": "AAAAAA+Arial-BoldMT",
+      "type": "Type0",
+      "embeddedBytes": 27568
+    },
+    {
+      "name": "BAAAAA+Sylfaen",
+      "type": "Type0",
+      "embeddedBytes": 29200
+    }
+  ],
+  "imagesPerPage": [
+    4
+  ]
+}
