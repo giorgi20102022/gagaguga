@@ -2,9 +2,10 @@ import { GEO_ELGUJA_FONT_BASE64 } from "./geoElgujaBase64";
 const FONT = "IronSignatureGeoElguja";
 let fontReady: Promise<void> | undefined;
 
-// Preserve confirmed fields verbatim. The only added character is the separator.
+// Abbreviate only the rendered signature; never mutate confirmed name fields.
 export function signatureText(firstName = "", lastName = ""): string {
-  return firstName && lastName ? `${firstName} ${lastName}` : firstName || lastName;
+  const initial = Array.from(firstName)[0];
+  return initial ? `${initial}. ${lastName}` : lastName;
 }
 
 // Legacy ASCII font encoding, used ONLY for drawing, never stored in name fields.

@@ -2,25 +2,25 @@
   {
     "first": "წიწა",
     "last": "წერეთელი",
-    "text": "წიწა წერეთელი",
-    "encoded": "wiwa wereTeli"
+    "text": "წ. წერეთელი",
+    "encoded": "w. wereTeli"
   },
   {
     "first": "ჭიჭა",
     "last": "ჭავჭავაძე",
-    "text": "ჭიჭა ჭავჭავაძე",
-    "encoded": "WiWa WavWavaZe"
+    "text": "ჭ. ჭავჭავაძე",
+    "encoded": "W. WavWavaZe"
   },
   {
-    "first": "წიწა",
-    "last": "ჭიჭინაძე",
-    "text": "წიწა ჭიჭინაძე",
-    "encoded": "wiwa WiWinaZe"
+    "first": "გიორგი",
+    "last": "წიჭინაძე",
+    "text": "გ. წიჭინაძე",
+    "encoded": "g. wiWinaZe"
   },
   {
-    "first": "  წანა",
+    "first": "ნინო",
     "last": "ჭია  ",
-    "text": "  წანა ჭია  ",
-    "encoded": "  wana Wia  "
+    "text": "ნ. ჭია  ",
+    "encoded": "n. Wia  "
   }
 ]

@@ -15,7 +15,8 @@ test('confirmed Unicode names produce distinct correct legacy glyphs and a PDF i
   await page.route('**/*',r=>r.abort());
   await page.setContent('<style>body{font:18px Arial;margin:28px}.ref{font:32px Sylfaen}img{max-width:100%;height:auto}section{break-inside:avoid;border-bottom:1px solid #aaa;padding:12px 0}h1{font-size:24px}</style><h1>LOCAL signature / PDF verification — not the n8n final document</h1>');
   await page.addScriptTag({content:bundle.outputFiles[0].text});
-  const names=[['წიწა','წერეთელი'],['ჭიჭა','ჭავჭავაძე'],['წიწა','ჭიჭინაძე'],['  წანა','ჭია  ']];
+  const names=[['წიწა','წერეთელი'],['ჭიჭა','ჭავჭავაძე'],['გიორგი','წიჭინაძე'],['ნინო','ჭია  ']];
+  const expected=['წ. წერეთელი','ჭ. ჭავჭავაძე','გ. წიჭინაძე','ნ. ჭია  '];
   const results=await page.evaluate(async names=>{
     const api=window.signature;
     const rows=[];
@@ -31,7 +32,11 @@ test('confirmed Unicode names produce distinct correct legacy glyphs and a PDF i
     return {rows,pair:api.encodeSignatureGlyphs('წჭწჭ')};
   },names);
   assert.equal(results.pair,'wWwW');
-  for(const [i,row] of results.rows.entries())assert.equal(row.text,`${names[i][0]} ${names[i][1]}`);
+  for(const [i,row] of results.rows.entries()){
+    assert.equal(row.text,expected[i]);
+    assert.equal(row.first,names[i][0]);
+    assert.equal(row.last,names[i][1]);
+  }
   assert.notEqual(results.rows[0].data,results.rows[1].data);
   await mkdir('output/pdf',{recursive:true});
   for(const [i,row] of results.rows.entries())await writeFile(`output/pdf/signature-${i+1}.jpg`,Buffer.from(row.data.split(',')[1],'base64'));
