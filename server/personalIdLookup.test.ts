@@ -45,7 +45,6 @@ function mockLookup(primary: unknown, registry: unknown = available, status = 20
 test("existing beneficiary results and primary failures never call the registry", async () => {
   for (const primary of [
     { success: false, status: "already_used", message: "existing error", personalId },
-    { success: true, status: "eligible", message: "existing success", personalId },
     { success: false, status: "error", message: "lookup failed", personalId },
     { success: false, status: "not_found", message: "unconfirmed miss", personalId },
   ]) {

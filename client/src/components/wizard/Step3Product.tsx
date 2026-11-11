@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useIsPresent } from "framer-motion";
 import { Receipt, Percent, Loader2, CheckCircle2, AlertCircle, Search } from "lucide-react";
 import axios from "axios";
 import { sendN8NRequest } from "@/lib/api";
@@ -46,15 +46,20 @@ export function Step3ProductInner({ data, updateData, onNext, onBack, dealerKey:
   const [verifiedProductName, setVerifiedProductName] = useState<string | null>(() => data?.verifiedProductName || null);
   const [ovenCode, setOvenCode] = useState(() => data?.ovenCode || (isGorgiaUser ? String(data?.supplierId || "") : ""));
 
-  // Guards async state updates so an in-flight code check or product fetch can never
-  // re-render this step after the wizard's <AnimatePresence> has begun detaching it —
-  // that second DOM-mutation pass over the same nodes is what crashes insertBefore.
+  // Ignore results for a replaced code or an exiting/unmounted step.
+  const isPresent = useIsPresent();
+  const presentRef = useRef(isPresent);
+  presentRef.current = isPresent && active !== false;
+  const verificationRef = useRef<object | null>(null);
+  const codeRef = useRef("");
+  codeRef.current = String(isGorgiaUser ? ovenCode : data.supplierId || "");
   const isMountedRef = useRef(true);
 
   useEffect(() => {
     isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
+      verificationRef.current = null;
     };
   }, []);
 
@@ -78,13 +83,13 @@ export function Step3ProductInner({ data, updateData, onNext, onBack, dealerKey:
         });
         if (!res.ok) throw new Error("Failed to fetch products");
         const data = await res.json();
-        if (cancelled) return;
+        if (cancelled || !presentRef.current) return;
         setProducts(data);
       } catch (err) {
-        if (cancelled) return;
+        if (cancelled || !presentRef.current) return;
         console.error("Error fetching products:", err);
       } finally {
-        if (!cancelled) setIsLoading(false);
+        if (!cancelled && presentRef.current) setIsLoading(false);
       }
     };
 
@@ -100,7 +105,7 @@ export function Step3ProductInner({ data, updateData, onNext, onBack, dealerKey:
 
   const handleVerifyOvenCode = async () => {
     const code = isGorgiaUser ? ovenCode : data.supplierId;
-    if (!code || code.length < 3) return;
+    if (!code || code.length < 3 || verificationRef.current || !presentRef.current) return;
 
     const dealerNameToSend = String(dealerName || data.supplierName || "").trim();
 
@@ -123,6 +128,10 @@ export function Step3ProductInner({ data, updateData, onNext, onBack, dealerKey:
       return;
     }
 
+    const request = {};
+    verificationRef.current = request;
+    const isCurrent = () => isMountedRef.current && presentRef.current &&
+      verificationRef.current === request && codeRef.current === code;
     setIsVerifyingOven(true);
     setOvenVerificationResult(null);
 
@@ -134,7 +143,7 @@ export function Step3ProductInner({ data, updateData, onNext, onBack, dealerKey:
         branch_name: dealerNameToSend,
       });
 
-      if (!isMountedRef.current) return;
+      if (!isCurrent()) return;
 
       if (result?.status === "success") {
         const message = result.message || "კოდი ვალიდურია";
@@ -201,7 +210,7 @@ export function Step3ProductInner({ data, updateData, onNext, onBack, dealerKey:
         });
       }
     } catch (err: any) {
-      if (!isMountedRef.current) return;
+      if (!isCurrent()) return;
       console.error("[Oven Verification] Native Error:", {
         name: err?.name,
         message: err?.message,
@@ -237,11 +246,15 @@ export function Step3ProductInner({ data, updateData, onNext, onBack, dealerKey:
         variant: "destructive",
       });
     } finally {
-      if (isMountedRef.current) setIsVerifyingOven(false);
+      if (verificationRef.current === request) {
+        verificationRef.current = null;
+        if (isMountedRef.current && presentRef.current) setIsVerifyingOven(false);
+      }
     }
   };
 
   const isNextDisabled =
+    isVerifyingOven ||
     !data.supplierName ||
     (isGorgiaUser ? !ovenCode : !data.supplierId) ||
     !data.model ||
@@ -260,6 +273,7 @@ export function Step3ProductInner({ data, updateData, onNext, onBack, dealerKey:
   }, [data.supplierName, data.supplierId, ovenCode, data.model, data.ovenVerified, isGorgiaUser, isNextDisabled]);
 
   const handleNext = () => {
+    if (verificationRef.current || isVerifyingOven) return;
     const newErrors: Record<string, boolean> = {};
     if (!data.supplierName) newErrors.supplierName = true;
     if (isGorgiaUser) {
@@ -396,6 +410,9 @@ export function Step3ProductInner({ data, updateData, onNext, onBack, dealerKey:
               value={isGorgiaUser ? ovenCode : (data.supplierId || "")} 
               onChange={(e) => {
                 const newVal = e.target.value;
+                codeRef.current = newVal;
+                verificationRef.current = null;
+                setIsVerifyingOven(false);
                 if (isGorgiaUser) {
                   setOvenCode(newVal);
                   updateData({ ovenCode: newVal });
@@ -436,12 +453,12 @@ export function Step3ProductInner({ data, updateData, onNext, onBack, dealerKey:
               {isVerifyingOven ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  იტვირთება...
+                  <span>იტვირთება...</span>
                 </>
               ) : (
                 <>
                   <Search className="w-4 h-4" />
-                  შემოწმება
+                  <span>შემოწმება</span>
                 </>
               )}
             </Button>
@@ -463,7 +480,7 @@ export function Step3ProductInner({ data, updateData, onNext, onBack, dealerKey:
                 ) : (
                   <AlertCircle className="w-4 h-4" />
                 )}
-                {ovenVerificationResult.message}
+                <span>{ovenVerificationResult.message}</span>
               </motion.div>
             )}
           </AnimatePresence>
@@ -554,7 +571,7 @@ export function Step3ProductInner({ data, updateData, onNext, onBack, dealerKey:
 
                   <div className="p-5">
                     <div className="font-semibold text-foreground mb-1 group-hover:text-primary transition-colors">{model.name}</div>
-                    <div className="text-2xl font-bold text-primary">{displayPrice.toFixed(0)} <span className="text-sm font-normal text-muted-foreground">GEL</span></div>
+                    <div className="text-2xl font-bold text-primary"><span>{displayPrice.toFixed(0)}</span> <span className="text-sm font-normal text-muted-foreground">GEL</span></div>
                     <div className="text-xs text-muted-foreground line-through">{basePrice} GEL</div>
 
                     {isIronPlusDealer && deliveryFeeForModel > 0 && (
@@ -571,7 +588,7 @@ export function Step3ProductInner({ data, updateData, onNext, onBack, dealerKey:
                               }}
                               className="h-4 w-4 rounded border-muted-foreground"
                             />
-                            მიტანის სერვისი
+                            <span>მიტანის სერვისი</span>
                           </label>
                           <span className="font-semibold text-foreground">{deliveryFeeForModel} GEL</span>
                         </div>
@@ -583,7 +600,7 @@ export function Step3ProductInner({ data, updateData, onNext, onBack, dealerKey:
                   {hasDiscount && (
                     <div className="absolute top-3 right-3 z-10 bg-accent text-accent-foreground text-xs font-bold px-2 py-1 rounded-md flex items-center gap-1 shadow-sm">
                       <Percent className="w-3 h-3" />
-                      {isCapped ? `${cardSubsidy.toFixed(0)} GEL` : `${(cardRate * 100).toFixed(0)}%`}
+                      <span>{isCapped ? `${cardSubsidy.toFixed(0)} GEL` : `${(cardRate * 100).toFixed(0)}%`}</span>
                     </div>
                   )}
                   
@@ -628,8 +645,8 @@ export function Step3ProductInner({ data, updateData, onNext, onBack, dealerKey:
           <div className="text-center sm:text-left">
             <h4 className="text-background/80 font-medium mb-1">ფასდაკლება</h4>
             <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-primary/20 text-primary-foreground text-sm font-semibold">
-              <Percent className="w-3.5 h-3.5" /> {((data.subsidyRate ?? 0) * 100).toFixed(0)}%
-              {data.subsidyAmount != null && ` (−${(data.subsidyAmount).toFixed(0)} GEL)`}
+              <Percent className="w-3.5 h-3.5" />
+              <span>{`${((data.subsidyRate ?? 0) * 100).toFixed(0)}%${data.subsidyAmount != null ? ` (−${data.subsidyAmount.toFixed(0)} GEL)` : ""}`}</span>
             </div>
             {data.subsidyAmount != null && data.subsidyAmount >= MAX_SUBSIDY_GEL && (
               <p className="text-xs text-background/60 mt-1">მაქს. სუბსიდია: {MAX_SUBSIDY_GEL} GEL</p>

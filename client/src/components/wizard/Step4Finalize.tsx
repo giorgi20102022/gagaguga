@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useIsPresent } from "framer-motion";
 import { Camera, CheckCircle2, ShieldCheck, MapPin, ScanLine, AlertCircle, XCircle, Check, ChevronsUpDown } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { sendN8NRequest } from "@/lib/api";
@@ -73,7 +73,7 @@ function SignaturePreview({ firstName, lastName, onGenerate, canvasRef }: {
   }, [firstName, lastName, canvasRef]);
   return <div className="space-y-2">
     <Label className="text-sm font-semibold flex items-center gap-2">
-      <ShieldCheck className="w-4 h-4 text-primary" /> ციფრული ხელმოწერა
+      <ShieldCheck className="w-4 h-4 text-primary" /> <span>ციფრული ხელმოწერა</span>
     </Label>
     <canvas ref={canvasRef} role="img" aria-label={text} style={{maxWidth:"100%",height:"auto"}} />
     <p className="text-[10px] text-muted-foreground">ხელმოწერა გენერირებულია ავტომატურად მომხმარებლის სახელის საფუძველზე</p>
@@ -121,6 +121,13 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
   const [isVerifyingSms, setIsVerifyingSms] = useState(false);
   const [smsCode, setSmsCode] = useState("");
   const [smsError, setSmsError] = useState<string | null>(null);
+  const isPresent = useIsPresent();
+  const presentRef = useRef(true);
+  presentRef.current = isPresent && active !== false;
+  const phoneRef = useRef(data.phone);
+  phoneRef.current = data.phone;
+  const smsSendRef = useRef(false);
+  const smsVerifyRef = useRef(false);
 
   // Every in-flight request here writes state that gates an <AnimatePresence> child
   // (verificationResult, the SMS code box). Once the wizard's outer presence starts
@@ -185,27 +192,34 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
     if (isBypassed) {
       return;
     }
-    if (!data.phone || isSendingSms) return;
+    if (!data.phone || smsSendRef.current || !presentRef.current) return;
+    smsSendRef.current = true;
+    const phone = data.phone;
+    const isCurrent = () => isMountedRef.current && presentRef.current && phoneRef.current === phone;
     setIsSendingSms(true);
     setSmsError(null);
     try {
       await axios.post("/api/verification/send-sms", { phone: data.phone });
-      if (!isMountedRef.current) return;
+      if (!isCurrent()) return;
       setIsSmsSent(true);
       toast({
         title: "SMS გაიგზავნა",
         description: "გთხოვთ შეიყვანოთ მიღებული კოდი",
       });
     } catch (err: any) {
-      if (!isMountedRef.current) return;
+      if (!isCurrent()) return;
       setSmsError(err.response?.data?.message || "SMS-ის გაგზავნა ვერ მოხერხდა");
     } finally {
-      if (isMountedRef.current) setIsSendingSms(false);
+      smsSendRef.current = false;
+      if (isMountedRef.current && presentRef.current) setIsSendingSms(false);
     }
   };
 
   const handleVerifySms = async () => {
-    if (!smsCode || isVerifyingSms) return;
+    if (!smsCode || smsVerifyRef.current || !presentRef.current) return;
+    smsVerifyRef.current = true;
+    const phone = data.phone;
+    const isCurrent = () => isMountedRef.current && presentRef.current && phoneRef.current === phone;
     setIsVerifyingSms(true);
     setSmsError(null);
     try {
@@ -213,23 +227,24 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
         phone: data.phone,
         code: smsCode
       });
-      if (!isMountedRef.current) return;
+      if (!isCurrent()) return;
       updateData({ smsVerified: !verification.data.bypassed });
       toast({
         title: "წარმატება",
         description: "ტელეფონის ნომერი დადასტურებულია",
       });
     } catch (err: any) {
-      if (!isMountedRef.current) return;
+      if (!isCurrent()) return;
       setSmsError(err.response?.data?.message || "არასწორი კოდი");
     } finally {
-      if (isMountedRef.current) setIsVerifyingSms(false);
+      smsVerifyRef.current = false;
+      if (isMountedRef.current && presentRef.current) setIsVerifyingSms(false);
     }
   };
 
   useEffect(() => {
-    if (active === false) receiptAbortRef.current?.abort();
-  }, [active]);
+    if (active === false || !isPresent) receiptAbortRef.current?.abort();
+  }, [active, isPresent]);
 
   const failReceiptVerification = (message: string) => {
     receiptAbortRef.current?.abort();
@@ -272,7 +287,7 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
     const controller = new AbortController();
     receiptAbortRef.current = controller;
     const photo = data.receiptPhoto;
-    const isCurrent = () => isMountedRef.current && !controller.signal.aborted &&
+    const isCurrent = () => isMountedRef.current && presentRef.current && !controller.signal.aborted &&
       receiptAbortRef.current === controller && receiptSnapshotRef.current === photo;
     const timeout = setTimeout(() => {
       if (isCurrent()) failReceiptVerification("ქვითრის შემოწმებას დრო გაუვიდა");
@@ -349,7 +364,7 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
       if (receiptAbortRef.current === controller) {
         receiptAbortRef.current = null;
         receiptInFlightRef.current = false;
-        if (isMountedRef.current) setIsVerifying(false);
+        if (isMountedRef.current && presentRef.current) setIsVerifying(false);
       }
     }
   };
@@ -450,7 +465,7 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
         <div className="space-y-6">
           <div className="space-y-4">
             <h3 className="text-lg font-bold text-foreground flex items-center gap-2">
-              <MapPin className="w-5 h-5 text-primary" /> ღუმელის მონტაჟის მისამართი
+              <MapPin className="w-5 h-5 text-primary" /> <span>ღუმელის მონტაჟის მისამართი</span>
             </h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2" ref={fieldRefs.cityDistrict}>
@@ -470,9 +485,9 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
                         errors.cityDistrict && "border-destructive bg-destructive/5"
                       )}
                     >
-                      {data.cityDistrict
+                      <span>{data.cityDistrict
                         ? GEORGIAN_CITIES.find((city) => city === data.cityDistrict)
-                        : "აირჩიეთ ქალაქი"}
+                        : "აირჩიეთ ქალაქი"}</span>
                       <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                     </Button>
                   </PopoverTrigger>
@@ -498,7 +513,7 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
                                   data.cityDistrict === city ? "opacity-100" : "opacity-0"
                                 )}
                               />
-                              {city}
+                              <span>{city}</span>
                             </CommandItem>
                           ))}
                         </CommandGroup>
@@ -527,7 +542,7 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
 
           <div className="space-y-3" ref={fieldRefs.receiptPhoto}>
             <Label className={cn("text-base font-semibold flex items-center gap-2", errors.receiptPhoto && "text-destructive")}>
-              <Camera className="w-4 h-4 text-primary" /> ქვითრის ფოტო *
+              <Camera className="w-4 h-4 text-primary" /> <span>ქვითრის ფოტო *</span>
             </Label>
             <MediaUploadZone
               key={`receiptPhoto-${receiptReset}`}
@@ -553,12 +568,12 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
                   {isVerifying ? (
                     <>
                       <ScanLine className="w-5 h-5 animate-pulse" />
-                      მოწმდება...
+                      <span>მოწმდება...</span>
                     </>
                   ) : (
                     <>
                       <ScanLine className="w-5 h-5" />
-                      შეამოწმე ქვითარი
+                      <span>შეამოწმე ქვითარი</span>
                     </>
                   )}
                 </Button>
@@ -566,7 +581,7 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
                 {!isVerifying && !verificationResult && (
                   <p className="text-sm text-amber-600 flex items-center gap-1.5 font-medium">
                     <AlertCircle className="w-4 h-4 shrink-0" />
-                    განაცხადის გასაგზავნად აუცილებელია ქვითრის შემოწმება
+                    <span>განაცხადის გასაგზავნად აუცილებელია ქვითრის შემოწმება</span>
                   </p>
                 )}
 
@@ -711,19 +726,19 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
             {isBypassed ? (
               <div className="text-sm text-blue-600 flex items-center gap-1.5 font-medium">
                 <CheckCircle2 className="w-4 h-4 text-blue-600" />
-                SMS ვერიფიკაცია გათიშულია დილერისთვის
+                <span>SMS ვერიფიკაცია გათიშულია დილერისთვის</span>
               </div>
             ) : isSmsVerified ? (
               <div className="text-sm text-green-600 flex items-center gap-1.5 font-medium">
                 <CheckCircle2 className="w-4 h-4" />
-                ნომერი დადასტურებულია
+                <span>ნომერი დადასტურებულია</span>
               </div>
             ) : null}
 
             {smsError && !isBypassed && (
               <div className="text-sm text-red-600 flex items-center gap-1.5 font-medium">
                 <AlertCircle className="w-4 h-4" />
-                {smsError}
+                <span>{smsError}</span>
               </div>
             )}
           </div>
@@ -743,12 +758,12 @@ export function Step4FinalizeInner({ data, updateData, onSubmit, onBack, isSubmi
           {isCancelling ? (
             <>
               <XCircle className="w-4 h-4 animate-pulse" />
-              იტვირთება...
+              <span>იტვირთება...</span>
             </>
           ) : (
             <>
               <XCircle className="w-4 h-4" />
-              შეკვეთის გაუქმება
+              <span>შეკვეთის გაუქმება</span>
             </>
           )}
         </Button>

@@ -22,6 +22,7 @@ import { validateBody, loginSchema, productQuerySchema, branchQuerySchema } from
 import { securityConfig } from "./middleware/security";
 import { pool } from "./db";
 import { runPersonalIdLookup } from "./personalIdLookup";
+import { maskPersonalId, maskPersonalIdsInText } from "./portalSearchResult";
 
 // Global map to track active dealer beneficiary personal IDs
 if (!(global as any).activeDealerBeneficiaries) {
@@ -722,15 +723,20 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
         return res.status(400).json({ message: "პირადი ნომერი აუცილებელია" });
       }
 
-      console.log(`[Dealer Personal ID Lookup] mode=${mode}:`, personalId);
+      console.log(`[Dealer Personal ID Lookup] mode=${mode}:`, maskPersonalId(personalId));
       const result = await runPersonalIdLookup(personalId, { firstName, lastName, mode });
-      console.log("[Dealer Personal ID Lookup] Result:", result);
+      // portalMessage is raw portal page text, which can echo the personal number too.
+      console.log("[Dealer Personal ID Lookup] Result:", {
+        ...result,
+        personalId: maskPersonalId(result.personalId),
+        portalMessage: result.portalMessage === undefined ? undefined : maskPersonalIdsInText(result.portalMessage),
+      });
 
       // Save the checked personal ID for later verification steps
       (globalThis as any).lastCheckedPersonalId = personalId || req.body.personalId;
       return res.json(result);
     } catch (err) {
-      console.error("[Dealer Personal ID Lookup] Error:", err);
+      console.error("[Dealer Personal ID Lookup] Error:", maskPersonalIdsInText(err instanceof Error ? err.stack || err.message : String(err)));
       const message = err instanceof Error ? err.message : "შემოწმება ვერ მოხერხდა";
       return res.status(500).json({ success: false, message, personalId: String(req.body?.personalId ?? "") });
     }

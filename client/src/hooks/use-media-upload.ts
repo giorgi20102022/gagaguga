@@ -64,6 +64,7 @@ export function useMediaUpload({ storedValue, onPersist, onFileReady, onError }:
   }, []);
 
   const handleFile = useCallback(async (file: File) => {
+    if (!isMountedRef.current) return;
     if (!file || !(file instanceof Blob)) {
       const msg = "ფოტოს წაკითხვა ვერ მოხერხდა, სცადეთ თავიდან";
       console.warn("Invalid file object provided to handleFile:", file);

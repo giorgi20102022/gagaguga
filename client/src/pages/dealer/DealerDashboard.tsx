@@ -645,7 +645,6 @@ export default function DealerDashboard() {
             <ErrorBoundary
               fallbackMessage="ნაბიჯის ჩატვირთვა ვერ მოხერხდა"
               resetKey={step}
-              onReset={() => { setStep(1); setFormData({}); }}
             >
               <AnimatePresence mode="wait">
                 {step === 1 && (

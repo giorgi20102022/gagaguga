@@ -1,5 +1,6 @@
 import type { Page } from "playwright-core";
 import type { PersonalIdLookupResult } from "./personalIdLookup";
+import { alreadyAppliedMessage, classifyPortalSearchText, NEEDS_REVIEW_MESSAGE } from "./portalSearchResult";
 
 const PORTAL_URL = process.env.PERSONAL_ID_LOOKUP_URL || "https://voucher.rda.gov.ge/";
 const COMPANY_CODE = process.env.PERSONAL_ID_LOOKUP_COMPANY_CODE || "424615394";
@@ -13,7 +14,6 @@ const RETRY_DELAY_MS = Number(process.env.PERSONAL_ID_LOOKUP_RETRY_DELAY_MS ?? 1
 const ALREADY_USED_MESSAGE =
   "ამ მომხმარებელმა უკვე ისარგებლა  სუბსიდირების პროგრამით";
 const REGISTER_SUCCESS_MESSAGE = "ბენეფიციარი წარმატებით დარეგისტრირდა.";
-const ELIGIBLE_MESSAGE = "ბენეფიციარი სისტემაშია.";
 const CAN_USE_MESSAGE =
   "მომხმარებელს სუბსიდირების პროგრამით ჯერ არ უსარგებლია შეგიძლიათ განაცხადის გაგრძელება.";
 
@@ -149,9 +149,9 @@ async function parseSearchResult(
   lastName: string,
   register: boolean,
 ): Promise<PersonalIdLookupResult> {
-  const lowered = text.toLowerCase();
+  const outcome = classifyPortalSearchText(text);
 
-  if (lowered.includes("ისარგებლა")) {
+  if (outcome.kind === "already_used") {
     return {
       success: false,
       status: "already_used",
@@ -161,7 +161,20 @@ async function parseSearchResult(
     };
   }
 
-  if (lowered.includes("არ მოიძებნა")) {
+  // "ბენეფიციარი ნაპოვნია ... სტატუსი - მოთხოვნილი": an application already exists.
+  // This used to be reported as eligible, letting a duplicate application continue.
+  if (outcome.kind === "already_applied") {
+    return {
+      success: false,
+      status: "already_applied",
+      message: alreadyAppliedMessage(outcome.portalStatus),
+      portalMessage: text,
+      portalStatus: outcome.portalStatus,
+      personalId,
+    };
+  }
+
+  if (outcome.kind === "not_found") {
     if (!register) {
       return {
         success: true,
@@ -192,31 +205,24 @@ async function parseSearchResult(
     };
   }
 
-  if (lowered.includes("ნაპოვნ")) {
-    return {
-      success: true,
-      status: "eligible",
-      message: register ? ELIGIBLE_MESSAGE : CAN_USE_MESSAGE,
-      portalMessage: text,
-      personalId,
-    };
-  }
-
+  // Unknown or ambiguous page text is never eligible.
   return {
     success: false,
-    status: "error",
-    message: text || "შედეგი ვერ მოიძებნა",
+    status: "needs_review",
+    message: NEEDS_REVIEW_MESSAGE,
+    portalMessage: text,
     personalId,
   };
 }
 
 // A result is worth retrying only when it's an inconclusive technical failure
-// (portal timeout, unexpected page state). Definitive answers (already_used,
-// not_found, eligible, added) and invalid input must never be retried —
+// (portal timeout, unexpected page state — needs_review included, since the page
+// may not have finished loading). Definitive answers (already_used,
+// already_applied, not_found, added) and invalid input must never be retried —
 // retrying them either can't change the outcome or would resubmit a
 // registration that already went through.
 function isRetryable(result: PersonalIdLookupResult): boolean {
-  return !result.success && result.status !== "already_used" && result.status !== "invalid_input";
+  return !result.success && !["already_used", "already_applied", "invalid_input"].includes(String(result.status));
 }
 
 function delay(ms: number): Promise<void> {

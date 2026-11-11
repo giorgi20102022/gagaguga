@@ -24,7 +24,6 @@ RETRY_DELAY_MS = int(os.environ.get("PERSONAL_ID_LOOKUP_RETRY_DELAY_MS", "1000")
 
 ALREADY_USED_MESSAGE = "ამ მომხმარებელმა უკვე ისარგებლა  სუბსიდირების პროგრამით"
 REGISTER_SUCCESS_MESSAGE = "ბენეფიციარი წარმატებით დარეგისტრირდა."
-ELIGIBLE_MESSAGE = "ბენეფიციარი სისტემაშია."
 CAN_USE_MESSAGE = (
     "მომხმარებელს სუბსიდირების პროგრამით ჯერ არ უსარგებლია შეგიძლიათ განაცხადის გაგრძელება."
 )
@@ -121,6 +120,25 @@ def _register_beneficiary(
     return True, text
 
 
+# Fail-safe classification, mirrored from server/portalSearchResult.ts — keep in sync.
+# Only an explicit "not found" lets an application continue; anything unrecognised
+# is needs_review. \s+ throughout: the page text contains newlines.
+ALREADY_USED_PATTERN = re.compile(r"ისარგებლა")
+FOUND_PATTERN = re.compile(r"ბენეფიციარი\s+ნაპოვნია")
+FOUND_STEM_PATTERN = re.compile(r"ნაპოვნ")
+NOT_FOUND_PATTERN = re.compile(r"არ\s+მოიძებნა")
+STATUS_PATTERN = re.compile(r"სტატუსი\s*-\s*(.+)")
+NEEDS_REVIEW_MESSAGE = (
+    "პორტალის პასუხის ამოცნობა ვერ მოხერხდა. განაცხადის გაგრძელება შეუძლებელია — "
+    "სცადეთ თავიდან ან დაუკავშირდით ადმინისტრატორს."
+)
+
+
+def _already_applied_message(portal_status: str | None) -> str:
+    status = f" (სტატუსი: {portal_status})" if portal_status else ""
+    return f"ამ პირად ნომერზე განაცხადი უკვე არსებობს{status}. განაცხადის გაგრძელება შეუძლებელია."
+
+
 def _parse_search_result(
     text: str,
     *,
@@ -130,9 +148,9 @@ def _parse_search_result(
     page,
     register: bool,
 ) -> dict:
-    lowered = text.lower()
+    text = text or ""
 
-    if "ისარგებლა" in lowered:
+    if ALREADY_USED_PATTERN.search(text):
         return {
             "success": False,
             "status": "already_used",
@@ -141,7 +159,23 @@ def _parse_search_result(
             "personalId": personal_id,
         }
 
-    if "არ მოიძებნა" in lowered:
+    # "ბენეფიციარი ნაპოვნია ... სტატუსი - მოთხოვნილი": an application already exists.
+    # This used to be reported as eligible, letting a duplicate application continue.
+    if FOUND_PATTERN.search(text):
+        match = STATUS_PATTERN.search(text)
+        portal_status = match.group(1).strip()[:100] if match else None
+        result = {
+            "success": False,
+            "status": "already_applied",
+            "message": _already_applied_message(portal_status),
+            "portalMessage": text,
+            "personalId": personal_id,
+        }
+        if portal_status:
+            result["portalStatus"] = portal_status
+        return result
+
+    if NOT_FOUND_PATTERN.search(text) and not FOUND_STEM_PATTERN.search(text):
         if not register:
             return {
                 "success": True,
@@ -167,30 +201,28 @@ def _parse_search_result(
             "personalId": personal_id,
         }
 
-    if "ნაპოვნ" in lowered:
-        return {
-            "success": True,
-            "status": "eligible",
-            "message": ELIGIBLE_MESSAGE if register else CAN_USE_MESSAGE,
-            "portalMessage": text,
-            "personalId": personal_id,
-        }
-
+    # Unknown or ambiguous page text is never eligible.
     return {
         "success": False,
-        "status": "error",
-        "message": text or "შედეგი ვერ მოიძებნა",
+        "status": "needs_review",
+        "message": NEEDS_REVIEW_MESSAGE,
+        "portalMessage": text,
         "personalId": personal_id,
     }
 
 
 def _is_retryable(result: dict) -> bool:
     """A result is worth retrying only when it's an inconclusive technical
-    failure (portal timeout, unexpected page state). Definitive answers
-    (already_used, not_found, eligible, added) and invalid input must never
-    be retried — retrying them either can't change the outcome or would
+    failure (portal timeout, unexpected page state — needs_review included,
+    since the page may not have finished loading). Definitive answers
+    (already_used, already_applied, not_found, added) and invalid input must
+    never be retried — retrying them either can't change the outcome or would
     resubmit a registration that already went through."""
-    return not result.get("success") and result.get("status") not in ("already_used", "invalid_input")
+    return not result.get("success") and result.get("status") not in (
+        "already_used",
+        "already_applied",
+        "invalid_input",
+    )
 
 
 def _attempt_lookup(

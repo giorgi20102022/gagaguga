@@ -11,6 +11,7 @@
     "build:vercel": "vite build",
     "start": "NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
+    "test:wizard-dom": "tailwindcss -i client/src/index.css -o output/wizard-dom/style.css && node --test tests/wizard-dom.test.mjs",
     "db:push": "drizzle-kit push",
     "db:migrate": "drizzle-kit migrate"
   },

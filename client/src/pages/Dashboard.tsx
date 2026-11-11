@@ -168,7 +168,6 @@ export default function Dashboard() {
             <ErrorBoundary
               fallbackMessage="An error occurred while loading this step"
               resetKey={step}
-              onReset={() => { setStep(1); setFormData({}); }}
             >
               <AnimatePresence mode="wait">
                 {step === 1 && (

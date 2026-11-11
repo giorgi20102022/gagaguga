@@ -60,7 +60,9 @@ for (const dashboard of ["client/src/pages/dealer/DealerDashboard.tsx", "client/
     const browser = await chromium.launch({ executablePath, headless: true });
     const base = `http://127.0.0.1:${server.address().port}`;
     const open = async (mode = 'identity') => {
-      const page = await browser.newPage();
+      const page = await browser.newPage(process.env.TEST_MOBILE === '1'
+        ? { viewport: { width: 393, height: 851 }, isMobile: true, hasTouch: true }
+        : { viewport: { width: 1440, height: 1000 } });
       page.ocrRequests = 0;
       page.on("request", request => { if (request.url().includes("/api/vision/extract-")) page.ocrRequests++; });
       await page.route('**/api/dealer/me', route => route.fulfill({contentType:'application/json', body:JSON.stringify({id:1,requireSmsVerification:true})}));

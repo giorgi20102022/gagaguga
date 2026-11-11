@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { CheckCircle2, Loader2, Search, ShieldAlert, Ban } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useIsPresent } from "framer-motion";
 import axios from "axios";
 
 interface Props {
@@ -25,13 +25,15 @@ export function Step2DealerPersonalId({ data, updateData, onNext, onBack, onRest
   const [error, setError] = useState<string | null>(null);
   const [isAlreadyUsed, setIsAlreadyUsed] = useState(false);
   const verified = Boolean(data.dealerPersonalIdVerified) && data.dealerPersonalId === personalId;
-  // Cancellation guard: once this step starts unmounting (the parent
-  // <AnimatePresence mode="wait"> begins its exit), an in-flight lookup must not run
-  // any setState/updateData at all — a late isChecking/error/isAlreadyUsed flip would
-  // add or remove a child of this component's own <AnimatePresence> while the parent
-  // is detaching the same nodes, which crashes with insertBefore/Node.
+  // Presence becomes false before unmount when an exit animation retains this step.
+  const isPresent = useIsPresent();
+  const presentRef = useRef(isPresent);
+  presentRef.current = isPresent;
   const isMountedRef = useRef(true);
   const abortRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    if (!isPresent) abortRef.current?.abort();
+  }, [isPresent]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -43,11 +45,11 @@ export function Step2DealerPersonalId({ data, updateData, onNext, onBack, onRest
   }, []);
 
   const runLookup = async () => {
-    if (!personalId || isChecking || abortRef.current) return;
+    if (!personalId || isChecking || abortRef.current || !presentRef.current) return;
 
     const controller = new AbortController();
     abortRef.current = controller;
-    const isCancelled = () => controller.signal.aborted || !isMountedRef.current;
+    const isCancelled = () => controller.signal.aborted || !isMountedRef.current || !presentRef.current;
 
     setIsChecking(true);
     setError(null);
@@ -81,7 +83,11 @@ export function Step2DealerPersonalId({ data, updateData, onNext, onBack, onRest
         personalId?: string;
       };
 
-      const isAlreadyUsed = result.error === "PERSONAL_NUMBER_EXISTS" || result.status === "already_used";
+      // already_applied: the portal already has an application for this ID.
+      // needs_review (unrecognised portal answer) has success:false, so it is blocked
+      // below as an error with a retry button.
+      const isAlreadyApplied = result.status === "already_applied";
+      const isAlreadyUsed = result.error === "PERSONAL_NUMBER_EXISTS" || result.status === "already_used" || isAlreadyApplied;
       const success = result.success === true && !isAlreadyUsed;
       const message = String(result.message ?? "").trim();
 
@@ -94,7 +100,7 @@ export function Step2DealerPersonalId({ data, updateData, onNext, onBack, onRest
       if (!success) {
         if (isAlreadyUsed) {
           setIsAlreadyUsed(true);
-          setError(ALREADY_USED_MESSAGE);
+          setError(isAlreadyApplied && message ? message : ALREADY_USED_MESSAGE);
         } else {
           setError(message || "პირადი ნომრის შემოწმება ვერ მოხერხდა");
         }
@@ -102,7 +108,7 @@ export function Step2DealerPersonalId({ data, updateData, onNext, onBack, onRest
     } catch (err: unknown) {
       if (isCancelled()) return;
       const errData = (err as { response?: { data?: { message?: string; error?: string; status?: string } } })?.response?.data;
-      const isAlreadyUsed = errData?.error === "PERSONAL_NUMBER_EXISTS" || errData?.status === "already_used";
+      const isAlreadyUsed = errData?.error === "PERSONAL_NUMBER_EXISTS" || errData?.status === "already_used" || errData?.status === "already_applied";
       setIsAlreadyUsed(isAlreadyUsed);
       const msg =
         typeof errData?.message === "string" && errData.message
@@ -196,6 +202,7 @@ export function Step2DealerPersonalId({ data, updateData, onNext, onBack, onRest
       <AnimatePresence mode="wait">
         {isChecking && (
           <motion.div
+            key="checking"
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 8 }}
@@ -213,6 +220,7 @@ export function Step2DealerPersonalId({ data, updateData, onNext, onBack, onRest
 
         {verified && !isChecking && (
           <motion.div
+            key="verified"
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
             className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-start gap-3"
@@ -231,6 +239,7 @@ export function Step2DealerPersonalId({ data, updateData, onNext, onBack, onRest
 
         {isAlreadyUsed && !isChecking && (
           <motion.div
+            key="already-used"
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
             className="p-6 rounded-2xl bg-destructive/15 border-2 border-destructive flex items-start gap-4 shadow-lg shadow-destructive/10 animate-in fade-in zoom-in-95 duration-200"
@@ -240,7 +249,7 @@ export function Step2DealerPersonalId({ data, updateData, onNext, onBack, onRest
             </div>
             <div className="space-y-1 flex-1 self-center">
               <h4 className="text-lg font-bold text-destructive">
-                {ALREADY_USED_MESSAGE}
+                {error || ALREADY_USED_MESSAGE}
               </h4>
               <button
                 type="button"
@@ -255,6 +264,7 @@ export function Step2DealerPersonalId({ data, updateData, onNext, onBack, onRest
 
         {error && !isChecking && !isAlreadyUsed && (
           <motion.div
+            key="error"
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
             className="p-4 rounded-xl bg-destructive/10 border border-destructive/20 flex items-start gap-3"

@@ -40,7 +40,7 @@ export function StepIndicator({ currentStep }: StepIndicatorProps) {
                   !isActive && !isCompleted && "bg-card text-muted-foreground border-2 border-border"
                 )}
               >
-                {isCompleted ? <Check className="w-5 h-5" /> : step.num}
+                {isCompleted ? <Check className="w-5 h-5" /> : <span>{step.num}</span>}
               </div>
               <span 
                 className={cn(

@@ -1,6 +1,12 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 import axios from "axios";
+import {
+  alreadyAppliedMessage,
+  classifyPortalSearchText,
+  maskPersonalIdsInText,
+  NEEDS_REVIEW_MESSAGE,
+} from "./portalSearchResult";
 
 export type PersonalIdLookupResult = {
   success: boolean;
@@ -8,6 +14,8 @@ export type PersonalIdLookupResult = {
   message: string;
   personalId: string;
   portalMessage?: string;
+  /** Status text the portal shows for an existing beneficiary, e.g. "მოთხოვნილი". */
+  portalStatus?: string;
   error?: string;
 };
 
@@ -29,12 +37,49 @@ function normalizeLookupResult(
   parsed: Partial<PersonalIdLookupResult>,
   fallbackPersonalId: string,
 ): PersonalIdLookupResult {
-  return {
+  const result: PersonalIdLookupResult = {
     success: Boolean(parsed.success),
     status: parsed.status,
     message: String(parsed.message ?? ""),
     personalId: String(parsed.personalId ?? fallbackPersonalId),
     portalMessage: parsed.portalMessage,
+  };
+  if (typeof parsed.portalStatus === "string" && parsed.portalStatus.trim()) {
+    result.portalStatus = parsed.portalStatus.trim();
+  }
+  return result;
+}
+
+// Re-checks every backend's answer (webhook, Vercel scraper, python.py), so a
+// stale or buggy classifier can never let an existing beneficiary continue.
+// The only successful results allowed through are an explicit not_found (which
+// still goes to the registry check below) and a completed registration.
+function enforceFailSafeOutcome(result: PersonalIdLookupResult): PersonalIdLookupResult {
+  const outcome = typeof result.portalMessage === "string"
+    ? classifyPortalSearchText(result.portalMessage)
+    : null;
+
+  if (outcome?.kind === "already_applied" && result.status !== "already_used") {
+    const portalStatus = outcome.portalStatus ?? result.portalStatus;
+    return {
+      success: false,
+      status: "already_applied",
+      message: alreadyAppliedMessage(portalStatus),
+      personalId: result.personalId,
+      portalMessage: result.portalMessage,
+      ...(portalStatus ? { portalStatus } : {}),
+    };
+  }
+  if (!result.success || result.status === "added") return result;
+  if (result.status === "not_found" && (outcome === null || outcome.kind === "not_found")) return result;
+
+  // Includes status "eligible", which both scrapers used to emit for "found".
+  return {
+    success: false,
+    status: "needs_review",
+    message: NEEDS_REVIEW_MESSAGE,
+    personalId: result.personalId,
+    portalMessage: result.portalMessage,
   };
 }
 
@@ -227,7 +272,7 @@ export async function runPersonalIdLookup(
   personalId: string,
   options?: { firstName?: string; lastName?: string; mode?: "check" | "register" },
 ): Promise<PersonalIdLookupResult> {
-  const result = await runPrimaryPersonalIdLookup(personalId, options);
+  const result = enforceFailSafeOutcome(await runPrimaryPersonalIdLookup(personalId, options));
   if (options?.mode === "register" || !result.success || result.status !== "not_found") {
     return result;
   }
@@ -254,7 +299,7 @@ export async function runPersonalIdLookup(
     // Temporary diagnostics for the actual n8n response.
     console.log('[Dealer Personal ID Lookup] n8n HTTP status:', response.status);
     const payload = typeof response.data === "string" ? JSON.parse(response.data) : response.data;
-    console.log('[Dealer Personal ID Lookup] n8n response:', payload);
+    console.log('[Dealer Personal ID Lookup] n8n response:', maskPersonalIdsInText(JSON.stringify(payload)));
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) return technicalError;
 
     if (payload.error === "PERSONAL_NUMBER_EXISTS" &&

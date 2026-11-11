@@ -72,8 +72,11 @@ function MediaUploadZoneInner({
   }, []);
 
   const activeStreamRef = useRef<MediaStream | null>(null);
+  // Canvas export can finish after the camera is closed or this zone is reset.
+  const captureGeneration = useRef(0);
 
   const cleanUpStream = useCallback(() => {
+    captureGeneration.current++;
     if (activeStreamRef.current) {
       activeStreamRef.current.getTracks().forEach((track) => {
         track.enabled = false;
@@ -221,7 +224,9 @@ function MediaUploadZoneInner({
       }
 
       ctx.drawImage(video, 0, 0, width, height);
+      const generation = ++captureGeneration.current;
       canvas.toBlob((blob) => {
+        if (generation !== captureGeneration.current) return;
         try {
           if (!blob) throw new Error("Canvas export toBlob returned null");
           const file = new File([blob], "capture.jpg", { type: "image/jpeg" });
@@ -328,13 +333,7 @@ function MediaUploadZoneInner({
 
   const previewSrc = previewUrl ?? (storedValue && storedValue.startsWith("data:") ? storedValue : null);
 
-  // Render the fullscreen camera through a portal on <body>. Kept inline, the overlay
-  // lives inside whatever ancestor <AnimatePresence> this zone is nested under (e.g.
-  // Step2Profile's "სოციალურად დაუცველი"/"პენსიონერი" blocks, or the wizard's own
-  // step-swap presence). Opening/closing it would then mutate DOM inside a subtree that
-  // presence may simultaneously be animating out — the same insertBefore/Node race.
-  // The portal decouples it from every ancestor's managed subtree; it is still
-  // `position: fixed; inset: 0`, so it renders identically.
+  // Keep the fullscreen camera outside transformed/overflow-hidden step containers.
   const cameraOverlayPortal =
     cameraOverlay && typeof document !== "undefined"
       ? createPortal(cameraOverlay, document.body)
@@ -389,7 +388,7 @@ function MediaUploadZoneInner({
 
         {previewSrc ? (
           <div
-            className="relative w-full h-full flex flex-col cursor-pointer"
+            className="relative w-full flex flex-col cursor-pointer"
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
@@ -410,7 +409,7 @@ function MediaUploadZoneInner({
             {uploadedHint && (
               <div className="absolute top-3 right-3 bg-black/60 backdrop-blur-md text-white text-xs px-2.5 py-1.5 rounded-lg border border-white/10 shadow-sm flex items-center gap-1.5">
                  <div className="w-1.5 h-1.5 rounded-full bg-green-400"></div>
-                 {uploadedHint}
+                 <span>{uploadedHint}</span>
               </div>
             )}
           </div>
@@ -426,10 +425,11 @@ function MediaUploadZoneInner({
             <div className="flex flex-wrap items-center justify-center gap-3 mt-2 w-full max-w-[320px]">
               <button
                 type="button"
+                disabled={disabled || isBusy}
                 className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90 py-2.5 px-4 rounded-xl text-sm font-bold transition-all shadow-sm flex items-center justify-center gap-2 min-w-[120px]"
                 onClick={() => setIsCameraOpen(true)}
               >
-                <Camera className="w-5 h-5" /> გადაღება
+                <Camera className="w-5 h-5" /> <span>გადაღება</span>
               </button>
               {/* Use a <label> pointing to the hidden input — the only 100% reliable way to open the file picker on iOS Safari */}
               <label
@@ -439,7 +439,7 @@ function MediaUploadZoneInner({
                   (disabled || isBusy) && "opacity-50 pointer-events-none"
                 )}
               >
-                <UploadCloud className="w-5 h-5" /> ატვირთვა
+                <UploadCloud className="w-5 h-5" /> <span>ატვირთვა</span>
               </label>
             </div>
           </div>

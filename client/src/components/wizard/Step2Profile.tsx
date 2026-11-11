@@ -157,10 +157,7 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
 
   const [errors, setErrors] = useState<Record<string, boolean>>({});
 
-  // Verification requests can outlive this step (the "უკან" button, or the dashboard
-  // resetting the wizard). Any setState landing afterwards would add/remove children of
-  // the two <AnimatePresence> blocks below while the parent presence is detaching this
-  // subtree — the insertBefore/Node crash. Abort + guard instead.
+  // Verification requests can outlive this step; ignore abandoned results.
   const isMountedRef = useRef(true);
   // One controller per verification — the two can be in flight at the same time, so a
   // shared ref would let starting one cancel (and strand the spinner of) the other.
@@ -183,6 +180,9 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
   const pensionerResetRef = useRef(0);
   const [pensionerReset, setPensionerReset] = useState(0);
   const isPresent = useIsPresent();
+  const latestRef = useRef({ data, isPresent });
+  latestRef.current = { data, isPresent };
+  const nextInFlightRef = useRef(false);
   useEffect(() => {
     if (!isPresent) {
       socialAbortRef.current?.abort();
@@ -512,7 +512,7 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
     (isPensionerChecked && (!isPensionerPhotoUploaded || !isPensionerVerified));
 
   const handleNext = async () => {
-    if (socialVerifyError || pensionerVerifyError || socialAbortRef.current || pensionerAbortRef.current) return;
+    if (nextInFlightRef.current || !isPresent || socialVerifyError || pensionerVerifyError || socialAbortRef.current || pensionerAbortRef.current) return;
     const newErrors: Record<string, boolean> = {};
     if (!data.firstName) newErrors.firstName = true;
     if (!data.lastName) newErrors.lastName = true;
@@ -533,16 +533,23 @@ export function Step2ProfileInner({ data, updateData, onNext, onBack }: Props) {
     }
 
     // Auto-generate signature from firstName and lastName before moving to next step
+    nextInFlightRef.current = true;
+    const isCurrent = () => isMountedRef.current && latestRef.current.isPresent &&
+      latestRef.current.data === data;
     try {
       const signatureBase64 = await generateSignatureBase64(data.firstName, data.lastName);
+      if (!isCurrent()) return;
       if (signatureBase64) {
         updateData({ signature: signatureBase64 } as any);
       }
     } catch (err) {
+      if (!isCurrent()) return;
       console.error("[Step2Profile] Failed to generate signature:", err);
+    } finally {
+      nextInFlightRef.current = false;
     }
 
-    onNext();
+    if (isCurrent()) onNext();
   };
 
   return (
