@@ -21,7 +21,10 @@ import {
   loadWizardStateWithFallback,
   saveWizardStateSync,
   clearWizardState,
+  saveRecoverySnapshot,
+  takeRecoverySnapshot,
 } from "@/lib/wizardPersistence";
+import { registerSessionExpirySaver } from "@/lib/dealerSession";
 import { compressBase64ToBlob } from "@/lib/imageUpload";
 const WIZARD_STORAGE_KEY = "dealer_wizard_state";
 
@@ -106,6 +109,32 @@ export default function DealerDashboard() {
       setPendingSubmission({ submissionId: pendingSubmissionId, queuePosition: null, dispatched: false });
     }
   }, []);
+
+  // Session expiry: the first 401 synchronously snapshots the draft to localStorage before
+  // the re-login modal opens. In-page re-login keeps this component (and its state) mounted;
+  // the snapshot covers a reload or closed tab, and is restored once for the same dealer.
+  const latestDraftRef = useRef({ step, formData });
+  latestDraftRef.current = { step, formData };
+  const dealerId = dealer?.id;
+  useEffect(() => {
+    if (!dealerId) return;
+    return registerSessionExpirySaver(() => {
+      const draft = latestDraftRef.current;
+      if (draft.step === 1 && Object.keys(draft.formData).length === 0) return;
+      saveRecoverySnapshot(WIZARD_STORAGE_KEY, dealerId, draft);
+    });
+  }, [dealerId]);
+
+  const recoveryCheckedRef = useRef(false);
+  useEffect(() => {
+    if (!dealerId || recoveryCheckedRef.current) return;
+    recoveryCheckedRef.current = true;
+    void takeRecoverySnapshot(WIZARD_STORAGE_KEY, dealerId).then((saved) => {
+      if (!saved) return;
+      setFormData(saved.formData);
+      setStep(saved.step);
+    });
+  }, [dealerId]);
 
   useEffect(() => {
     if (isRehydrating) return;

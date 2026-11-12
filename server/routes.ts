@@ -17,7 +17,7 @@ import multer from "multer";
 import axios from "axios";
 import crypto from "crypto";
 import type { User, Dealer, Product, Branch } from "@shared/schema";
-import { withAuth, withAdminOnly, withDealerOnly, withDealerScope, type AuthRequest } from "./middleware/auth";
+import { withAdminOnly, withDealerScope, createRequireDealer, issueDealerSession, DEALER_SESSION_MAX_AGE_MS, type AuthRequest } from "./middleware/auth";
 import { validateBody, loginSchema, productQuerySchema, branchQuerySchema } from "./middleware/validation";
 import { securityConfig } from "./middleware/security";
 import { pool } from "./db";
@@ -241,6 +241,9 @@ const finalizations = new FinalizationService(new PostgresFinalizationStore(pool
 
 export async function registerRoutes(httpServer: Server, app: express.Express) {
   const storage = getStorage();
+  // Every dealer wizard endpoint goes through this: dealer identity comes from the signed,
+  // rolling dealer session cookie only — never from a query param or the request body.
+  const requireDealer = createRequireDealer(async (id) => Boolean(await storage.getDealerById(id)));
   const demoUser = { id: 1, username: "demo@example.com" } as const;
 
   // ── Unified Login with Zod Validation and HttpOnly Cookies ──
@@ -289,13 +292,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
       if (!passwordMatch) {
         return res.status(401).json({ message: "Invalid credentials" });
       }
-      const token = jwt.sign(
-        { dealerId: dealer.id, dealerKey: dealer.key, email: dealer.email, role: "dealer" },
-        JWT_SECRET,
-        { expiresIn: "2h" }
-      );
-      res.cookie("auth_token", token, securityConfig.cookieOptions);
-      res.cookie("dealer_token", token, securityConfig.cookieOptions);
+      issueDealerSession(res, dealer);
       return res.json({
         role: "dealer",
         redirect: "/workspace",
@@ -314,13 +311,15 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
       secret: process.env.SESSION_SECRET || "dealer-portal-secret",
       resave: false,
       saveUninitialized: false,
-      store:
-        process.env.NODE_ENV === "production"
-          ? storage.sessionStore
-          : new session.MemoryStore(),
+      // PostgreSQL-backed (connect-pg-simple, existing "session" table) in every
+      // environment, so sessions survive restarts and multiple instances.
+      store: storage.sessionStore,
+      rolling: true,
       cookie: {
+        httpOnly: true,
         secure: process.env.NODE_ENV === "production",
-        maxAge: 24 * 60 * 60 * 1000,
+        sameSite: "lax",
+        maxAge: DEALER_SESSION_MAX_AGE_MS,
       },
     }),
   );
@@ -393,7 +392,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
   });
 
   // Updated to handle multipart FormData (frontImage, backImage) from iOS Safari
-  app.post("/api/vision/extract-id", upload.fields([{ name: "frontImage", maxCount: 1 }, { name: "backImage", maxCount: 1 }]), async (req: Request, res: Response) => {
+  app.post("/api/vision/extract-id", requireDealer, upload.fields([{ name: "frontImage", maxCount: 1 }, { name: "backImage", maxCount: 1 }]), async (req: Request, res: Response) => {
     console.log("Extraction started (multipart)...");
 
     try {
@@ -488,7 +487,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
     }
   });
 
-  app.post("/api/vision/extract-passport", async (req: Request, res: Response) => {
+  app.post("/api/vision/extract-passport", requireDealer, async (req: Request, res: Response) => {
     console.log("Passport Extraction started...");
 
     try {
@@ -572,7 +571,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
     }
   });
 
-  app.post("/api/vision/extract-passport-file", upload.single("data"), async (req: Request, res: Response) => {
+  app.post("/api/vision/extract-passport-file", requireDealer, upload.single("data"), async (req: Request, res: Response) => {
     console.log("[Passport Extraction] Multipart upload received");
 
     try {
@@ -633,7 +632,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
     }
   });
 
-  app.post("/api/vision/verify-receipt", async (req: Request, res: Response) => {
+  app.post("/api/vision/verify-receipt", requireDealer, async (req: Request, res: Response) => {
 
     try {
       const { image } = req.body;
@@ -706,7 +705,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
   });
 
   // Dealer personal ID lookup (Playwright / python.py on voucher.rda.gov.ge)
-  app.post("/api/verification/dealer-personal-id", async (req: Request, res: Response) => {
+  app.post("/api/verification/dealer-personal-id", requireDealer, async (req: Request, res: Response) => {
     // This lookup now retries internally on inconclusive portal failures
     // (see runPersonalIdLookup / python.py), which can take longer than the
     // server's global 120s socket timeout (server/index.ts). Extend it for
@@ -743,7 +742,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
   });
 
   // Proxy endpoint for stove code verification & cancellation (used by client api.ts)
-  app.post("/api/check-stove-code", async (req: Request, res: Response) => {
+  app.post("/api/check-stove-code", requireDealer, async (req: Request, res: Response) => {
     try {
       const action = req.body.action || "verify";
       const { code } = req.body;
@@ -758,12 +757,18 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
 
       const n8nUrl = process.env.STOVE_CODE_CHECK_WEBHOOK || "https://n8n.srv1020074.hstgr.cloud/webhook/kodiii";
 
+      // The dealer name sent to n8n comes from the session's dealer record. Only Gorgia's
+      // branch name is dealer-chosen (it names a branch of the logged-in dealer).
+      const sessionDealer = await storage.getDealerById((req as AuthRequest).user!.dealerId!);
+      if (!sessionDealer) return res.status(401).json({ code: "DEALER_SESSION_EXPIRED", message: "Authentication required" });
+      const isGorgiaDealer = sessionDealer.key?.toLowerCase() === "gorgia";
+
       const n8nRes = await axios.post(n8nUrl, {
         action,
         code: code,
         code_row: req.body.code_row,
-        dealer_name: req.body.dealer_name,
-        branch_name: req.body.branch_name,
+        dealer_name: sessionDealer.name,
+        branch_name: isGorgiaDealer ? (req.body.branch_name || sessionDealer.name) : sessionDealer.name,
       }, {
         headers: { "Content-Type": "application/json" },
         timeout: 120000,
@@ -787,7 +792,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
     }
   });
 
-  app.post("/api/vision/verify-oven", async (req: Request, res: Response) => {
+  app.post("/api/vision/verify-oven", requireDealer, async (req: Request, res: Response) => {
 
     try {
       const { code } = req.body;
@@ -872,7 +877,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
     return walk(raw);
   };
 
-  app.post("/api/vision/verify-social-card", upload.single("image"), async (req: Request, res: Response) => {
+  app.post("/api/vision/verify-social-card", requireDealer, upload.single("image"), async (req: Request, res: Response) => {
 
     try {
       const imageFile = (req as Request & {
@@ -1046,7 +1051,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
   });
 
   // ── SMS Verification ──
-  app.post("/api/verification/send-sms", withAuth as any, withDealerOnly as any, async (req: Request, res: Response) => {
+  app.post("/api/verification/send-sms", requireDealer, async (req: Request, res: Response) => {
     const { phone } = req.body;
 
     const dealerId = (req as AuthRequest).user!.dealerId!;
@@ -1152,7 +1157,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
   // Keep old endpoint as alias for now
   app.post("/api/sms/send", (req, res) => res.redirect(307, "/api/verification/send-sms"));
 
-  app.post("/api/verification/verify-sms", withAuth as any, withDealerOnly as any, async (req: Request, res: Response) => {
+  app.post("/api/verification/verify-sms", requireDealer, async (req: Request, res: Response) => {
     const { phone, code } = req.body;
 
     const dealerId = (req as AuthRequest).user!.dealerId!;
@@ -1190,7 +1195,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
   app.post("/api/sms/verify", (req, res) => res.redirect(307, "/api/verification/verify-sms"));
 
   // Pensioner Document Verification
-  app.post("/api/vision/verify-pensioner", async (req: Request, res: Response) => {
+  app.post("/api/vision/verify-pensioner", requireDealer, async (req: Request, res: Response) => {
 
     try {
       if (!req.body || typeof req.body !== "object") {
@@ -1792,13 +1797,10 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
     } catch { return res.status(503).json({ message: "Submission status unavailable" }); }
   });
 
-  // Public Products Route
-  app.get("/api/products", async (req, res) => {
+  // Dealer products — scoped to the logged-in dealer; ?dealer= is ignored.
+  app.get("/api/products", requireDealer, async (req, res) => {
     try {
-      const dealerKeyRaw = req.query.dealer;
-      const dealerKey = (Array.isArray(dealerKeyRaw) ? dealerKeyRaw[0] : dealerKeyRaw) as string | undefined;
-      const dealerId = dealerKey ? await storage.getDealerIdByKey(dealerKey) : await storage.getDealerIdByKey("iron");
-      if (!dealerId) return res.status(404).json({ message: "Dealer not found" });
+      const dealerId = (req as AuthRequest).user!.dealerId!;
       const products = await storage.getProducts(dealerId);
       res.json(products);
     } catch (err) {
@@ -1806,13 +1808,10 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
     }
   });
 
-  // Public Branches Route
-  app.get("/api/branches", async (req, res) => {
+  // Dealer branches — scoped to the logged-in dealer; ?dealer= is ignored.
+  app.get("/api/branches", requireDealer, async (req, res) => {
     try {
-      const dealerKeyRaw = req.query.dealer;
-      const dealerKey = (Array.isArray(dealerKeyRaw) ? dealerKeyRaw[0] : dealerKeyRaw) as string | undefined;
-      const dealerId = dealerKey ? await storage.getDealerIdByKey(dealerKey) : await storage.getDealerIdByKey("iron");
-      if (!dealerId) return res.status(404).json({ message: "Dealer not found" });
+      const dealerId = (req as AuthRequest).user!.dealerId!;
       const branches = await storage.getBranches(dealerId);
       res.json(branches);
     } catch (err) {
@@ -1854,13 +1853,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
         console.warn("[Dealer Login] Password mismatch:", { email: String(email), dealerId: dealer.id, dealerKey: dealer.key });
         return res.status(401).json({ message: "Invalid credentials" });
       }
-      const token = jwt.sign(
-        { dealerId: dealer.id, dealerKey: dealer.key, email: dealer.email, role: "dealer" },
-        JWT_SECRET,
-        { expiresIn: "2h" }
-      );
-      res.cookie("auth_token", token, securityConfig.cookieOptions);
-      res.cookie("dealer_token", token, securityConfig.cookieOptions);
+      issueDealerSession(res, dealer);
       console.log("[Dealer Login] Success:", { dealerId: dealer.id, dealerKey: dealer.key, email: dealer.email });
       return res.json({ role: "dealer", dealer: { id: dealer.id, key: dealer.key, name: dealer.name, email: dealer.email, identificationCode: dealer.identificationCode, requireSmsVerification: !isSmsBypassActive(dealer), smsBypassExpiresAt: dealer.smsBypassExpiresAt, serverNow: new Date().toISOString() } });
     } catch (err) {
@@ -1869,7 +1862,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express) {
     }
   });
 
-  app.get("/api/dealer/me", withAuth as any, withDealerOnly as any, async (req: Request, res: Response) => {
+  app.get("/api/dealer/me", requireDealer, async (req: Request, res: Response) => {
     try {
       const dealerId = (req as AuthRequest).user?.dealerId;
       if (!dealerId) return res.status(401).json({ message: "Unauthorized" });

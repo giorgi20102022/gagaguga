@@ -15,6 +15,7 @@ import { useAdminAuth } from "@/hooks/use-admin-auth";
 
 import DealerDashboard from "@/pages/dealer/DealerDashboard";
 import { useDealerAuth } from "@/hooks/use-dealer-auth";
+import { SessionExpiredModal } from "@/components/SessionExpiredModal";
 
 function AdminGuard({ children }: { children: React.ReactNode }) {
   const { isAdmin, isLoading } = useAdminAuth();
@@ -57,7 +58,9 @@ function DealerGuard({ children }: { children: React.ReactNode }) {
   }
 
   if (!isDealer) return null;
-  return <>{children}</>;
+  // While the session is expired the page stays mounted (keeping the wizard state) behind
+  // the blocking re-login modal.
+  return <>{children}<SessionExpiredModal /></>;
 }
 
 // Redirect /dealer/dashboard → /workspace for backwards compat

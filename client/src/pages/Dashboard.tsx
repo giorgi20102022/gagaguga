@@ -16,7 +16,11 @@ import {
   loadWizardStateWithFallback,
   saveWizardStateSync,
   clearWizardState,
+  saveRecoverySnapshot,
+  takeRecoverySnapshot,
 } from "@/lib/wizardPersistence";
+import { registerSessionExpirySaver } from "@/lib/dealerSession";
+import { SessionExpiredModal } from "@/components/SessionExpiredModal";
 import { Loader2 } from "lucide-react";
 import { useDealerAuth } from "@/hooks/use-dealer-auth";
 
@@ -50,6 +54,32 @@ export default function Dashboard() {
     }
     rehydrate();
   }, []);
+
+  // Session expiry: the first 401 synchronously snapshots the draft to localStorage before
+  // the re-login modal opens. In-page re-login keeps this component (and its state) mounted;
+  // the snapshot covers a reload or closed tab, and is restored once for the same dealer.
+  const latestDraftRef = useRef({ step, formData });
+  latestDraftRef.current = { step, formData };
+  const dealerId = dealer?.id;
+  useEffect(() => {
+    if (!dealerId) return;
+    return registerSessionExpirySaver(() => {
+      const draft = latestDraftRef.current;
+      if (draft.step === 1 && Object.keys(draft.formData).length === 0) return;
+      saveRecoverySnapshot(WIZARD_STORAGE_KEY, dealerId, draft);
+    });
+  }, [dealerId]);
+
+  const recoveryCheckedRef = useRef(false);
+  useEffect(() => {
+    if (!dealerId || isRehydrating || recoveryCheckedRef.current) return;
+    recoveryCheckedRef.current = true;
+    void takeRecoverySnapshot(WIZARD_STORAGE_KEY, dealerId).then((saved) => {
+      if (!saved) return;
+      setFormData(saved.formData);
+      setStep(saved.step);
+    });
+  }, [dealerId, isRehydrating]);
 
   useEffect(() => {
     if (isRehydrating) return;
@@ -151,6 +181,7 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
+      <SessionExpiredModal />
       <Navbar />
 
       <main className="flex-1 w-full max-w-4xl mx-auto px-3 sm:px-6 py-6 md:py-12">

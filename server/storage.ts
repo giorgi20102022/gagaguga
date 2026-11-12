@@ -57,14 +57,12 @@ export class DatabaseStorage implements IStorage {
   sessionStore: session.Store;
 
   constructor() {
-    if (process.env.NODE_ENV === "production") {
-      this.sessionStore = new PostgresSessionStore({
-        pool,
-        createTableIfMissing: true,
-      });
-    } else {
-      this.sessionStore = new session.MemoryStore();
-    }
+    // Always persistent: the app requires DATABASE_URL, and the "session" table is created
+    // by db-init.ts. A MemoryStore would lose every session on restart.
+    this.sessionStore = new PostgresSessionStore({
+      pool,
+      createTableIfMissing: true,
+    });
   }
 
   async getUser(id: number): Promise<User | undefined> {
